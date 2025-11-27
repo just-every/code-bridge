@@ -1,0 +1,256 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const { WebSocketServer } = require('ws');
+const crypto = require('crypto');
+const net = require('net');
+
+// Parse command-line arguments
+const args = process.argv.slice(2);
+const workspacePathArg = args.find(arg => !arg.startsWith('--'));
+const portArg = args.find(arg => arg.startsWith('--port='));
+
+const workspacePath = workspacePathArg ? path.resolve(workspacePathArg) : process.cwd();
+const preferredPort = portArg ? parseInt(portArg.split('=')[1], 10) : 9876;
+
+const codeDir = path.join(workspacePath, '.code');
+const lockFile = path.join(codeDir, 'code-bridge.lock');
+const metaFile = path.join(codeDir, 'code-bridge.json');
+
+// Ensure .code directory exists
+if (!fs.existsSync(codeDir)) {
+  fs.mkdirSync(codeDir, { recursive: true });
+}
+
+// Try to acquire workspace lock
+function tryAcquireLock() {
+  try {
+    // Check if lock file exists and if process is still running
+    if (fs.existsSync(lockFile)) {
+      const lockData = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+
+      // Check if the process is still alive
+      try {
+        process.kill(lockData.pid, 0); // Signal 0 checks if process exists
+        console.error(`code-bridge-host is already running for this workspace (PID ${lockData.pid})`);
+        console.error(`Lock file: ${lockFile}`);
+        process.exit(1);
+      } catch (err) {
+        // Process is dead, we can take over the lock
+        console.log(`Stale lock detected (PID ${lockData.pid}), acquiring lock...`);
+      }
+    }
+
+    // Write our lock
+    const lockData = {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      workspacePath
+    };
+    fs.writeFileSync(lockFile, JSON.stringify(lockData, null, 2));
+    return true;
+  } catch (err) {
+    console.error(`Failed to acquire lock: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// Release lock and clean up
+function releaseLock() {
+  try {
+    if (fs.existsSync(lockFile)) {
+      fs.unlinkSync(lockFile);
+    }
+    if (fs.existsSync(metaFile)) {
+      fs.unlinkSync(metaFile);
+    }
+  } catch (err) {
+    console.error(`Error releasing lock: ${err.message}`);
+  }
+}
+
+// Find an available port
+async function findAvailablePort(startPort) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.listen(startPort, () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+    server.on('error', () => {
+      // Port is taken, try next one
+      resolve(findAvailablePort(startPort + 1));
+    });
+  });
+}
+
+// Generate random secret
+function generateSecret() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Write metadata file
+function writeMetadata(port, secret) {
+  const metadata = {
+    url: `ws://127.0.0.1:${port}`,
+    port,
+    secret,
+    workspacePath,
+    startedAt: new Date().toISOString()
+  };
+  fs.writeFileSync(metaFile, JSON.stringify(metadata, null, 2));
+  return metadata;
+}
+
+// Main server logic
+async function startServer() {
+  // Acquire lock
+  tryAcquireLock();
+
+  // Find available port
+  const port = await findAvailablePort(preferredPort);
+
+  // Generate secret
+  const secret = generateSecret();
+
+  // Write metadata
+  const metadata = writeMetadata(port, secret);
+
+  console.log(`code-bridge-host started`);
+  console.log(`  Workspace: ${workspacePath}`);
+  console.log(`  Port: ${port}`);
+  console.log(`  Secret: ${secret.slice(0, 8)}...`);
+  console.log(`  Metadata: ${metaFile}`);
+
+  // Track connected clients
+  const bridges = new Set(); // bridge role clients
+  const consumers = new Set(); // consumer role clients
+
+  // Create WebSocket server
+  const wss = new WebSocketServer({ port });
+
+  wss.on('connection', (ws, req) => {
+    let isAuthenticated = false;
+    let role = null;
+    let clientId = null;
+
+    // Set up timeout for auth
+    const authTimeout = setTimeout(() => {
+      if (!isAuthenticated) {
+        ws.close(1008, 'Authentication timeout');
+      }
+    }, 5000);
+
+    ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+
+        // Handle authentication
+        if (!isAuthenticated) {
+          if (message.type === 'auth') {
+            if (message.secret === secret) {
+              isAuthenticated = true;
+              role = message.role || 'bridge'; // Default to bridge for backward compatibility
+              clientId = message.clientId || `${role}-${Date.now()}`;
+              clearTimeout(authTimeout);
+
+              // Add to appropriate set
+              if (role === 'bridge') {
+                bridges.add(ws);
+                console.log(`Bridge client connected: ${clientId} (${bridges.size} bridges, ${consumers.size} consumers)`);
+              } else if (role === 'consumer') {
+                consumers.add(ws);
+                console.log(`Consumer client connected: ${clientId} (${bridges.size} bridges, ${consumers.size} consumers)`);
+              } else {
+                ws.close(1008, `Invalid role: ${role}`);
+                return;
+              }
+
+              ws.send(JSON.stringify({ type: 'auth_success', role, clientId }));
+            } else {
+              ws.close(1008, 'Invalid secret');
+            }
+            return;
+          } else {
+            ws.close(1008, 'Authentication required');
+            return;
+          }
+        }
+
+        // Handle messages from authenticated clients
+        if (role === 'bridge') {
+          // Broadcast to all consumer clients
+          const payload = JSON.stringify(message);
+          let sentCount = 0;
+          consumers.forEach(consumer => {
+            if (consumer.readyState === 1) { // OPEN
+              consumer.send(payload);
+              sentCount++;
+            }
+          });
+
+          if (sentCount > 0) {
+            console.log(`Broadcast from bridge ${clientId} to ${sentCount} consumer(s): ${message.type || 'unknown'}`);
+          }
+        } else if (role === 'consumer') {
+          // Consumers don't send events, just receive them
+          // Could add consumer->bridge commands here in the future
+          console.log(`Message from consumer ${clientId} (ignored): ${message.type || 'unknown'}`);
+        }
+      } catch (err) {
+        console.error(`Error processing message: ${err.message}`);
+        ws.close(1011, 'Internal error');
+      }
+    });
+
+    ws.on('close', () => {
+      clearTimeout(authTimeout);
+      if (role === 'bridge') {
+        bridges.delete(ws);
+        console.log(`Bridge client disconnected: ${clientId || 'unknown'} (${bridges.size} bridges, ${consumers.size} consumers)`);
+      } else if (role === 'consumer') {
+        consumers.delete(ws);
+        console.log(`Consumer client disconnected: ${clientId || 'unknown'} (${bridges.size} bridges, ${consumers.size} consumers)`);
+      }
+    });
+
+    ws.on('error', (err) => {
+      console.error(`WebSocket error: ${err.message}`);
+    });
+  });
+
+  wss.on('error', (err) => {
+    console.error(`Server error: ${err.message}`);
+  });
+
+  // Handle shutdown
+  function shutdown() {
+    console.log('\nShutting down...');
+    wss.close(() => {
+      releaseLock();
+      console.log('Server stopped');
+      process.exit(0);
+    });
+
+    // Force exit after 5 seconds
+    setTimeout(() => {
+      console.log('Forcing exit...');
+      releaseLock();
+      process.exit(1);
+    }, 5000);
+  }
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  process.on('exit', () => {
+    releaseLock();
+  });
+}
+
+// Start the server
+startServer().catch(err => {
+  console.error(`Failed to start server: ${err.message}`);
+  releaseLock();
+  process.exit(1);
+});

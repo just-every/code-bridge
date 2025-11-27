@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Bridge Web Demo</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .status {
+      color: #666;
+      margin-bottom: 30px;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .output {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 20px;
+      font-family: monospace;
+      font-size: 14px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Code Bridge Web Demo</h1>
+    <div class="status">Bridge is active. Events are being sent to ws://localhost:9876</div>
+
+    <div>
+      <button onclick="testLog()">Test Log</button>
+      <button onclick="testWarn()">Test Warning</button>
+      <button onclick="testError()">Test Error</button>
+      <button onclick="testException()">Test Exception</button>
+      <button onclick="testRejection()">Test Unhandled Rejection</button>
+    </div>
+
+    <div class="output" id="output">
+      Ready to test. Click buttons above to send events to the bridge.
+    </div>
+  </div>
+
+  <script type="module">
+    import { startBridge } from '../dist/index.mjs';
+
+    // Force dev mode for demo
+    window.__DEV__ = true;
+
+    // Start the bridge
+    const bridge = startBridge({
+      url: 'ws://localhost:9876',
+      secret: 'dev-secret',
+      projectId: 'web-demo',
+      enabled: true,
+    });
+
+    window.bridge = bridge;
+
+    function addOutput(msg) {
+      const output = document.getElementById('output');
+      output.textContent += '\n' + new Date().toLocaleTimeString() + ': ' + msg;
+      output.scrollTop = output.scrollHeight;
+    }
+
+    window.testLog = () => {
+      console.log('Test log message from web demo');
+      addOutput('Sent log event');
+    };
+
+    window.testWarn = () => {
+      console.warn('Test warning message from web demo');
+      addOutput('Sent warning event');
+    };
+
+    window.testError = () => {
+      console.error('Test error message from web demo');
+      addOutput('Sent error event');
+    };
+
+    window.testException = () => {
+      try {
+        throw new Error('Test exception from web demo');
+      } catch (err) {
+        console.error(err);
+        addOutput('Sent exception event');
+      }
+    };
+
+    window.testRejection = () => {
+      Promise.reject(new Error('Test unhandled rejection from web demo'));
+      addOutput('Sent unhandled rejection event');
+    };
+
+    addOutput('Bridge started successfully');
+  </script>
+</body>
+</html>

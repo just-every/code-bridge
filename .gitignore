@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Logs & diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# TypeScript incremental builds
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.*
+
+# Editor cruft
+.DS_Store
+.idea/
+.vscode/
+
+# Coverage & tooling artifacts
+coverage/
+.nyc_output/
+*.lcov
