@@ -1,6 +1,8 @@
 name: npm release
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch: {}
@@ -22,13 +24,37 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - name: Read package metadata
+        id: pkg
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if version is already published
+        id: published
+        env:
+          PKG_NAME: ${{ steps.pkg.outputs.name }}
+          PKG_VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "Version $PKG_NAME@$PKG_VERSION already on npm; skipping publish."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install
+        if: steps.published.outputs.published == 'false'
         run: npm ci
 
       - name: Build
+        if: steps.published.outputs.published == 'false'
         run: npm run build
 
       - name: Publish
+        if: steps.published.outputs.published == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
