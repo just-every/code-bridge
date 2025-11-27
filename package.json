@@ -32,14 +32,13 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^24.10.1",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {
     "ws": "^8.16.0"
   },
-  "peerDependencies": {},
   "repository": {
     "type": "git",
     "url": "https://github.com/just-every/code-bridge"
