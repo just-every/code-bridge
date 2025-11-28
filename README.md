@@ -170,6 +170,15 @@ interface HelloMessage {
 - `screenshot` - Sends pre-encoded screenshots (opt-in via `enableScreenshot: true`)
 - `control` - Allows consumers (e.g., Code) to send control commands; opt-in via `enableControl: true` and handle them with `onControl(...)`
 
+## Subscriptions & Filtering
+
+`code-bridge-host` keeps per-consumer subscriptions so each consumer only receives the events it wants.
+
+- Bridges advertise capabilities in a `hello` frame (`capabilities: ['error', 'console', 'pageview', 'screenshot', 'control']`).
+- Consumers can send a `subscribe` frame with `levels: ['errors'|'warn'|'info'|'trace']`, optional `capabilities`, and optional `llm_filter` (`off|minimal|aggressive`).
+- No `subscribe` → default to errors only; capability-gated events (pageview, screenshot, control) require the consumer to request them and the bridge to have advertised them.
+- See `docs/subscriptions.md` for the exact shapes and filtering logic; run `node demo/test-subscription-flow.js` (with a host running) to observe routing.
+
 ### 30-second setup (npm user)
 1. In your app (dev build):
    ```ts
@@ -290,6 +299,16 @@ npm test
 # Run end-to-end demo against a running `code` workspace
 node demo/workspace-bridge-demo.js /path/to/workspace
 ```
+
+### Subscription filtering demo
+
+With `code-bridge-host` running (so `.code/code-bridge.json` exists), run:
+
+```bash
+node demo/test-subscription-flow.js
+```
+
+This spins up one bridge and three consumers to show level and capability filtering in action.
 
 ### Dev demo with Code host
 

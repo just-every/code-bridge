@@ -30,17 +30,27 @@ Click the buttons to send different types of events. Check the browser console a
 
 ### 4. Test end-to-end with a running `code` workspace
 
-If you have `code` running, it writes `.code/code-bridge.json` with the bridge host details. After building:
+If you have `code` running, the host will be auto-ensured by `startBridge()` if none is running. After building:
 
 ```bash
 node demo/workspace-bridge-demo.js /path/to/workspace
 ```
 
-This will auto-connect to the host, emit sample logs, an unhandled rejection, and an uncaught error so they appear as developer messages in your Code session. The demo uses `enabled: true` to force the bridge on.
+This will auto-connect, emit sample logs, an unhandled rejection, and an uncaught error so they appear as developer messages in your Code session. The demo uses `enabled: true` to force the bridge on.
 
 Tip: In normal dev apps, just call `startBridge()`; it will ensure a host is running (dev-only) and connect automatically. To send screenshots, enable `enableScreenshot: true` and call `sendScreenshot({ mime, data })`. To receive control commands in your app, enable `enableControl: true` and register `onControl((msg) => console.log(msg))`.
 
 Tip: If you prefer non-interactive, you can run `code exec "echo hi"` in the same workspace; Code will subscribe as a consumer while the command runs and will receive bridge events.
+
+### 5. Optional: Test subscription filtering
+
+With `code-bridge-host` running (so `.code/code-bridge.json` exists), run:
+
+```bash
+node demo/test-subscription-flow.js
+```
+
+This spawns one bridge and three consumers to demonstrate level and capability filtering.
 
 ## Integration Guide
 
