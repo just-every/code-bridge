@@ -1,4 +1,7 @@
-import type { BridgeOptions, BridgeConnection, BridgeEvent, Breadcrumb, LogLevel } from './types';
+import fs from 'fs';
+import path from 'path';
+import { spawn } from 'child_process';
+import type { BridgeOptions, BridgeConnection, BridgeEvent, Breadcrumb, LogLevel, BridgeCapability } from './types';
 import { detectPlatform, isDevMode } from './platform';
 import { BridgeWebSocket } from './websocket';
 import { Throttler } from './throttle';
@@ -8,8 +11,25 @@ const DEFAULT_URL = `ws://localhost:${DEFAULT_PORT}`;
 const DEFAULT_SECRET = 'dev-secret';
 const DEFAULT_MAX_BREADCRUMBS = 50;
 const DEFAULT_THROTTLE_MS = 100;
+const HOST_LOCK = '.code/code-bridge.lock';
+const HOST_META = '.code/code-bridge.json';
+const HOST_HEARTBEAT_STALE_MS = 15_000;
+
+interface HostMeta {
+  url: string;
+  port?: number;
+  secret: string;
+  workspacePath?: string;
+  startedAt?: string;
+  pid?: number;
+  heartbeatAt?: string;
+}
 
 export function startBridge(options: BridgeOptions = {}): BridgeConnection {
+  // Try to ensure a host is running (best-effort, dev-only). This is intentionally
+  // silent on failure so production stays no-op.
+  const hostMeta = ensureHostIfPossible(options);
+
   // Determine whether to enable the bridge
   // Priority:
   // 1. CODE_BRIDGE=1 env var → force on
@@ -29,19 +49,47 @@ export function startBridge(options: BridgeOptions = {}): BridgeConnection {
     // No-op in production or when explicitly disabled
     return {
       disconnect: () => {},
+      trackPageview: () => {},
+      sendScreenshot: () => {},
+      onControl: () => {},
     };
   }
 
   const platform = detectPlatform();
-  const url = options.url ?? DEFAULT_URL;
-  const secret = options.secret ?? DEFAULT_SECRET;
+  const url = options.url ?? hostMeta?.url ?? DEFAULT_URL;
+  const secret = options.secret ?? hostMeta?.secret ?? DEFAULT_SECRET;
   const projectId = options.projectId;
   const maxBreadcrumbs = options.maxBreadcrumbs ?? DEFAULT_MAX_BREADCRUMBS;
   const throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
+  const enablePageview = options.enablePageview ?? false;
+  const enableScreenshot = options.enableScreenshot ?? false;
+  const enableControl = options.enableControl ?? false;
+
+  // Build capabilities list (always include error and console, optionally pageview and screenshot)
+  const capabilities: BridgeCapability[] = ['error', 'console'];
+  if (enablePageview) {
+    capabilities.push('pageview');
+  }
+  if (enableScreenshot) {
+    capabilities.push('screenshot');
+  }
+  if (enableControl) {
+    capabilities.push('control');
+  }
 
   const breadcrumbs: Breadcrumb[] = [];
   const throttler = new Throttler(throttleMs);
-  const ws = new BridgeWebSocket(url, secret);
+  const ws = new BridgeWebSocket(url, secret, capabilities, platform, projectId);
+
+  // Hook control handler placeholder; updated via onControl
+  let controlHandler: ((msg: any) => void) | null = null;
+  ws.setControlHandler((msg) => {
+    if (controlHandler) {
+      controlHandler(msg);
+    } else {
+      console.log('[code-bridge] control message received (no handler set):', msg);
+    }
+  });
 
   // Connect WebSocket
   ws.connect().catch((err) => {
@@ -198,6 +246,46 @@ export function startBridge(options: BridgeOptions = {}): BridgeConnection {
   patchConsole('error');
   patchConsole('debug');
 
+  // Pageview tracking function
+  function trackPageview(params: { url?: string; route?: string }): void {
+    if (!enablePageview) {
+      console.warn('[code-bridge] Pageview tracking is disabled. Set enablePageview: true in BridgeOptions.');
+      return;
+    }
+
+    const finalUrl = params.url ?? (platform === 'web' && typeof window !== 'undefined' ? window.location.href : undefined);
+    const finalRoute = params.route ?? (platform === 'web' && typeof window !== 'undefined' ? window.location.pathname : undefined);
+
+    sendEvent({
+      type: 'pageview',
+      level: 'info',
+      message: `Pageview: ${finalRoute || finalUrl || 'unknown'}`,
+      url: finalUrl,
+      route: finalRoute,
+    });
+  }
+
+  // Screenshot sending function (dev-only, no-op in production)
+  function sendScreenshot(params: { mime: string; data: string; url?: string; route?: string }): void {
+    if (!enableScreenshot) {
+      console.warn('[code-bridge] Screenshot sending is disabled. Set enableScreenshot: true in BridgeOptions.');
+      return;
+    }
+
+    const finalUrl = params.url ?? (platform === 'web' && typeof window !== 'undefined' ? window.location.href : undefined);
+    const finalRoute = params.route ?? (platform === 'web' && typeof window !== 'undefined' ? window.location.pathname : undefined);
+
+    sendEvent({
+      type: 'screenshot',
+      level: 'info',
+      message: `Screenshot: ${finalRoute || finalUrl || 'unknown'}`,
+      mime: params.mime,
+      data: params.data,
+      url: finalUrl,
+      route: finalRoute,
+    });
+  }
+
   // Return connection handle
   return {
     disconnect: () => {
@@ -214,5 +302,89 @@ export function startBridge(options: BridgeOptions = {}): BridgeConnection {
       // Disconnect WebSocket
       ws.disconnect();
     },
+    trackPageview,
+    sendScreenshot,
+    onControl: (handler: (msg: any) => void) => {
+      controlHandler = handler;
+    },
   };
+}
+
+// Best-effort host ensure: if metadata is healthy, reuse it; otherwise try to
+// spawn code-bridge-host (dev-only) and wait briefly for fresh metadata.
+function ensureHostIfPossible(options: BridgeOptions): HostMeta | undefined {
+  // Only attempt in dev; production should stay no-op unless explicitly enabled
+  if (!isDevMode()) return undefined;
+
+  const workspace = options.projectId ? process.cwd() : process.cwd();
+  const lockPath = path.join(workspace, HOST_LOCK);
+  const metaPath = path.join(workspace, HOST_META);
+
+  const healthy = readHealthyMeta(metaPath);
+  if (healthy) return healthy;
+
+  // Try to start host (non-blocking, best-effort)
+  try {
+    const bin = resolveHostBin(workspace);
+    if (bin) {
+      const child = spawn(bin.cmd, bin.args, {
+        cwd: workspace,
+        stdio: 'ignore',
+        detached: true,
+        env: process.env,
+      });
+      child.unref();
+
+      // Poll for fresh metadata up to ~2s
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        const fresh = readHealthyMeta(metaPath);
+        if (fresh) return fresh;
+      }
+    }
+  } catch (err) {
+    // Swallow errors; stay no-op rather than crashing
+    return undefined;
+  }
+
+  return readHealthyMeta(metaPath);
+}
+
+function readHealthyMeta(metaPath: string): HostMeta | undefined {
+  try {
+    const raw = fs.readFileSync(metaPath, 'utf8');
+    const meta = JSON.parse(raw) as HostMeta;
+
+    // Basic required fields
+    if (!meta.url || !meta.secret) return undefined;
+
+    // Check pid alive if present
+    if (meta.pid) {
+      try {
+        process.kill(meta.pid, 0);
+      } catch {
+        return undefined;
+      }
+    }
+
+    // Check heartbeat freshness if present
+    if (meta.heartbeatAt) {
+      const age = Date.now() - new Date(meta.heartbeatAt).getTime();
+      if (age > HOST_HEARTBEAT_STALE_MS) return undefined;
+    }
+
+    return meta;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveHostBin(workspace: string): { cmd: string; args: string[] } | undefined {
+  // Prefer local node_modules/.bin
+  const localBin = path.join(workspace, 'node_modules', '.bin', 'code-bridge-host');
+  if (fs.existsSync(localBin)) {
+    return { cmd: localBin, args: [workspace] };
+  }
+  // Fallback to npx (may be slower, but works)
+  return { cmd: 'npx', args: ['code-bridge-host', workspace] };
 }

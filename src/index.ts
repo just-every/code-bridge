@@ -6,4 +6,8 @@ export type {
   Breadcrumb,
   LogLevel,
   Platform,
+  SubscriptionLevel,
+  BridgeCapability,
+  HelloMessage,
+  SubscribeMessage,
 } from './types';

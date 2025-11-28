@@ -3,7 +3,7 @@
 Development-only bridge for capturing errors and logs from web, Node.js, and React Native applications and sending them to a centralized debugging server.
 
 What’s included:
-- Client SDK (`startBridge`) for web/Node/RN
+- Client SDK (`startBridge`) for web/Node/RN (auto-ensures a host in dev)
 - Shared host daemon (`code-bridge-host`) that fans out events from many bridge clients to many consumers
 - Workspace demo scripts for quick verification with Code
 
@@ -106,6 +106,12 @@ interface BridgeOptions {
 
   // Force enable/disable (overrides auto-detection)
   enabled?: boolean;
+
+  // Enable pageview tracking (default: false, dev-only)
+  enablePageview?: boolean;
+
+  // Enable screenshot sending (default: false, dev-only)
+  enableScreenshot?: boolean;
 }
 ```
 
@@ -140,13 +146,115 @@ This means you can safely call `startBridge({ url, secret })` in your code and i
 - Stay disabled in production builds (zero overhead)
 - Be tree-shaken out by bundlers when disabled
 
+## Capabilities
+
+The bridge client advertises its capabilities to the host upon connection via a `hello` frame:
+
+```typescript
+interface HelloMessage {
+  type: 'hello';
+  capabilities: ('error' | 'console' | 'pageview' | 'screenshot' | 'control')[];
+  platform: 'web' | 'node' | 'react-native' | 'unknown';
+  projectId?: string;
+  route?: string;    // Current route (web/RN)
+  url?: string;      // Current URL (web/RN)
+}
+```
+
+**Default capabilities:**
+- `error` - Captures uncaught errors and unhandled rejections
+- `console` - Intercepts console.log/info/warn/error/debug calls
+
+**Optional capabilities:**
+- `pageview` - Tracks page/route changes (opt-in via `enablePageview: true`)
+- `screenshot` - Sends pre-encoded screenshots (opt-in via `enableScreenshot: true`)
+- `control` - Allows consumers (e.g., Code) to send control commands; opt-in via `enableControl: true` and handle them with `onControl(...)`
+
+### 30-second setup (npm user)
+1. In your app (dev build):
+   ```ts
+   import { startBridge } from '@just-every/code-bridge';
+   const bridge = startBridge({ enableScreenshot: false, enableControl: false });
+   ```
+   - Defaults to errors-only; no screenshots/control unless enabled.
+   - In dev, `startBridge` will auto-ensure the host (using the local bin or `npx code-bridge-host` if none is running) and connect.
+2. Start Code in the same workspace (`code` or `code exec ...`); it auto-connects as a consumer and shows developer messages from the bridge.
+
+
+## Pageview Tracking
+
+Pageview tracking is **opt-in** and **dev-only**. Enable it to track route changes in your application:
+
+```typescript
+const bridge = startBridge({
+  projectId: 'my-app',
+  enablePageview: true,  // Opt-in to pageview tracking
+});
+
+// Manual pageview tracking
+bridge.trackPageview({ route: '/dashboard', url: 'https://example.com/dashboard' });
+
+// Or use auto-detected values (web only)
+bridge.trackPageview({});  // Uses window.location.href and window.location.pathname
+```
+
+**Note:** Pageview events are only sent when `enablePageview: true` is set in options. Calling `trackPageview()` without enabling it will log a warning.
+
+## Screenshot Sending
+
+Screenshot sending is **opt-in** and **dev-only**. Enable it to send pre-encoded screenshots from your application:
+
+```typescript
+const bridge = startBridge({
+  projectId: 'my-app',
+  enableScreenshot: true,  // Opt-in to screenshot sending
+});
+
+// Send a screenshot (you must provide pre-encoded image data)
+// Example 1: Using base64-encoded data
+const canvas = document.querySelector('canvas');
+const dataUrl = canvas.toDataURL('image/png');
+const base64Data = dataUrl.split(',')[1]; // Strip "data:image/png;base64," prefix
+
+bridge.sendScreenshot({
+  mime: 'image/png',
+  data: base64Data,
+  url: window.location.href,    // Optional
+  route: window.location.pathname, // Optional
+});
+
+// Example 2: Send a screenshot from an existing image
+fetch('/screenshot.png')
+  .then(res => res.blob())
+  .then(blob => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      bridge.sendScreenshot({
+        mime: 'image/png',
+        data: base64,
+      });
+    };
+    reader.readAsDataURL(blob);
+  });
+```
+
+**Important notes:**
+- Screenshot sending is **dev-only** and disabled by default
+- The SDK does **NOT** automatically capture screenshots - you must provide pre-encoded image data
+- Pass `mime` and `data` (base64-encoded) to `sendScreenshot()`
+- Optional `url` and `route` parameters are auto-detected in web environments
+- This API is a **transport layer only** - it sends whatever image data you provide to the bridge host
+
+**Note:** Screenshot events are only sent when `enableScreenshot: true` is set in options. Calling `sendScreenshot()` without enabling it will log a warning.
+
 ## Event Schema
 
 Events sent to the server follow this structure:
 
 ```typescript
 interface BridgeEvent {
-  type: 'error' | 'log' | 'console';
+  type: 'error' | 'log' | 'console' | 'pageview' | 'screenshot';
   level: 'log' | 'info' | 'warn' | 'error' | 'debug';
   message: string;
   stack?: string;
@@ -158,6 +266,10 @@ interface BridgeEvent {
     level: string;
     message: string;
   }>;
+  url?: string;      // For pageview and screenshot events
+  route?: string;    // For pageview and screenshot events
+  mime?: string;     // For screenshot events
+  data?: string;     // For screenshot events (base64-encoded image)
 }
 ```
 
@@ -193,11 +305,16 @@ To wire your app during development, read the same metadata and call `startBridg
 
 **Advanced override:** Set `CODE_BRIDGE=1` to force-enable the bridge even without dev mode detection (useful for testing production builds locally).
 
+### Screenshots (opt-in, dev-only)
+- Enable in your app: `startBridge({ enableScreenshot: true, ... })`
+- Send a pre-encoded image: `conn.sendScreenshot({ mime: 'image/png', data: '<base64>' })`
+- Host forwards only if the bridge advertised `screenshot` and the consumer subscribed to `screenshot`; rate-limited per bridge.
+
 ### Using with Code (consumer)
 
 - Start the host in your workspace: `npx code-bridge-host /path/to/workspace` (writes `.code/code-bridge.json`).
 - Start `code` (TUI or `code exec ...`) in the same workspace; it auto-detects the metadata, connects as a consumer, and posts a developer message with the host details.
-- Run any app/demo that calls `startBridge` with the metadata URL/secret—events stream into all active Code sessions on that workspace.
+- Run any app/demo that calls `startBridge`—in dev it will auto-ensure the host (spawns it if missing), then connect. Events stream into all active Code sessions on that workspace.
 
 ## Host Server
 
@@ -300,11 +417,23 @@ ws.on('message', (data) => {
    }
    ```
 
-2. **Bridge events** (from bridge → consumers):
+2. **Hello frame** (from bridge clients after auth):
+   ```json
+   {
+     "type": "hello",
+     "capabilities": ["error", "console", "pageview"],
+     "platform": "web",
+     "projectId": "my-app",
+     "route": "/dashboard",
+     "url": "https://example.com/dashboard"
+   }
+   ```
+
+3. **Bridge events** (from bridge → consumers):
    - Bridge clients send `BridgeEvent` objects
    - Host broadcasts to all authenticated consumer clients
 
-3. **Response** (after auth):
+4. **Response** (after auth):
    ```json
    {
      "type": "auth_success",

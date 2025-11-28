@@ -20,7 +20,7 @@ In another terminal:
 node demo/node-demo.js
 ```
 
-You should see events being logged in the server terminal. The demo uses `enabled: true` to force the bridge on.
+You should see events being logged in the server terminal. The demo uses `enabled: true` to force the bridge on (regular dev apps auto-enable when a host is present or will spawn it if missing).
 
 ### 3. Test with Web
 
@@ -38,6 +38,8 @@ node demo/workspace-bridge-demo.js /path/to/workspace
 
 This will auto-connect to the host, emit sample logs, an unhandled rejection, and an uncaught error so they appear as developer messages in your Code session. The demo uses `enabled: true` to force the bridge on.
 
+Tip: In normal dev apps, just call `startBridge()`; it will ensure a host is running (dev-only) and connect automatically. To send screenshots, enable `enableScreenshot: true` and call `sendScreenshot({ mime, data })`. To receive control commands in your app, enable `enableControl: true` and register `onControl((msg) => console.log(msg))`.
+
 Tip: If you prefer non-interactive, you can run `code exec "echo hi"` in the same workspace; Code will subscribe as a consumer while the command runs and will receive bridge events.
 
 ## Integration Guide
@@ -49,9 +51,13 @@ Tip: If you prefer non-interactive, you can run `code exec "echo hi"` in the sam
 import { startBridge } from '@just-every/code-bridge';
 
 // Initialize once at app startup
-startBridge({
+const bridge = startBridge({
   projectId: 'my-web-app',
+  enablePageview: true,  // Optional: enable pageview tracking
 });
+
+// Manual pageview tracking (when enabled)
+bridge.trackPageview({ route: '/home' });
 
 // Your app code here
 ```
@@ -75,14 +81,27 @@ const bridge = startBridge({
 // App.tsx
 import { useEffect } from 'react';
 import { startBridge } from '@just-every/code-bridge';
+import { useNavigation } from '@react-navigation/native';  // Example with React Navigation
 
 export default function App() {
+  const navigation = useNavigation();
+
   useEffect(() => {
     const bridge = startBridge({
       projectId: 'my-mobile-app',
+      enablePageview: true,  // Optional: enable pageview tracking
     });
 
-    return () => bridge.disconnect();
+    // Optional: Track navigation changes (React Navigation example)
+    const unsubscribe = navigation.addListener('state', () => {
+      const currentRoute = navigation.getCurrentRoute();
+      bridge.trackPageview({ route: currentRoute?.name });
+    });
+
+    return () => {
+      unsubscribe();
+      bridge.disconnect();
+    };
   }, []);
 
   // Rest of your app
@@ -134,8 +153,65 @@ The bridge captures:
 
 - **Global Errors**: Uncaught exceptions, unhandled promise rejections
 - **Console Calls**: log, info, warn, error, debug
+- **Pageviews**: Route/URL changes (opt-in with `enablePageview: true`)
 - **Stack Traces**: Automatically captured for errors
 - **Breadcrumbs**: History of console events leading up to errors (last 50 by default)
+
+## Pageview Tracking
+
+Pageview tracking is **opt-in** and helps you understand user navigation patterns:
+
+```javascript
+// Enable pageview tracking
+const bridge = startBridge({
+  projectId: 'my-app',
+  enablePageview: true,
+});
+
+// Track pageviews manually
+bridge.trackPageview({ route: '/dashboard', url: 'https://example.com/dashboard' });
+
+// Auto-detect current location (web only)
+bridge.trackPageview({});
+```
+
+**When to use pageview tracking:**
+- Single Page Applications (SPAs) with client-side routing
+- React Navigation in React Native
+- Any app where you want to track navigation flow
+
+**Note:** Pageview tracking is dev-only and disabled by default. Set `enablePageview: true` to enable it.
+
+## Screenshot Sending
+
+Screenshot sending is **opt-in** and helps you send pre-encoded screenshots to the debugging server:
+
+```javascript
+// Enable screenshot sending
+const bridge = startBridge({
+  projectId: 'my-app',
+  enableScreenshot: true,
+});
+
+// Send a screenshot (web example using canvas)
+const canvas = document.querySelector('canvas');
+const dataUrl = canvas.toDataURL('image/png');
+const base64Data = dataUrl.split(',')[1]; // Strip data URL prefix
+
+bridge.sendScreenshot({
+  mime: 'image/png',
+  data: base64Data,
+  url: window.location.href,     // Optional
+  route: window.location.pathname, // Optional
+});
+```
+
+**When to use screenshot sending:**
+- Debugging canvas-based applications or games
+- Sending visual snapshots of UI states
+- Capturing rendered output for analysis
+
+**Note:** Screenshot sending is dev-only and disabled by default. Set `enableScreenshot: true` to enable it. The SDK does NOT automatically capture screenshots - you must provide the pre-encoded image data.
 
 ## Using the Host Server
 
