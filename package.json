@@ -20,6 +20,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "node demo/node-demo.js",
+    "test:unit": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -33,6 +34,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "vitest": "^1.4.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0"
   },

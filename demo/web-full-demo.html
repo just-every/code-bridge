@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Code Bridge Web Full Demo</title>
+  <style>
+    body { font-family: sans-serif; padding: 16px; }
+    button { margin: 4px; padding: 8px 12px; }
+    #log { white-space: pre-wrap; border: 1px solid #ccc; padding: 8px; height: 200px; overflow: auto; }
+  </style>
+  <script type="module">
+    import { startBridge } from '../dist/index.mjs';
+
+    const logEl = () => document.getElementById('log');
+    const append = (msg) => { const el = logEl(); if (el) { el.textContent += msg + '\n'; el.scrollTop = el.scrollHeight; } };
+
+    async function loadMeta() {
+      try {
+        const res = await fetch('/.code/code-bridge.json', { cache: 'no-store' });
+        if (res.ok) {
+          const meta = await res.json();
+          if (meta?.url && meta?.secret) return { url: meta.url, secret: meta.secret };
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    const meta = await loadMeta();
+    const url = meta?.url || localStorage.getItem('cb_url') || 'ws://localhost:9876';
+    const secret = meta?.secret || localStorage.getItem('cb_secret') || 'dev-secret';
+
+    append(`Connecting to ${url}`);
+
+    // optional screenshot provider using canvas snapshot of the page
+    const screenshotProvider = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = document.documentElement.clientWidth;
+      canvas.height = document.documentElement.clientHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#eef';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = '#333';
+      ctx.font = '20px sans-serif';
+      ctx.fillText('Code Bridge Demo', 20, 40);
+      const dataUrl = canvas.toDataURL('image/png');
+      return { mime: 'image/png', data: dataUrl.split(',')[1] };
+    };
+
+    const bridge = startBridge({
+      url,
+      secret,
+      projectId: 'web-full-demo',
+      enabled: true,
+      enablePageview: true,
+      enableNavigation: true,
+      enableNetwork: true,
+      enableControl: true,
+      enableScreenshot: true,
+      screenshotProvider,
+    });
+
+    append('Bridge started');
+
+    // Controls
+    window.triggerConsole = () => {
+      console.log('demo log', { now: Date.now() });
+      console.warn('demo warn');
+      console.error('demo error');
+      append('Console events sent');
+    };
+
+    window.triggerNavigation = () => {
+      const next = `/route-${Math.floor(Math.random()*1000)}`;
+      history.pushState({}, '', next);
+      bridge.trackNavigation({ from: window.location.href, to: window.location.origin + next, route: next, initiator: 'pushState' });
+      append(`Navigation to ${next}`);
+    };
+
+    window.triggerFetches = async () => {
+      try {
+        await fetch('https://httpbin.org/status/200');
+        await fetch('https://httpbin.org/status/404');
+        append('Fetch 200 & 404 fired');
+      } catch (e) {
+        append('Fetch error ' + e.message);
+      }
+    };
+
+    window.triggerScreenshot = async () => {
+      try {
+        const shot = await screenshotProvider();
+        bridge.sendScreenshot({ mime: shot.mime, data: shot.data });
+        append('Screenshot sent');
+      } catch (e) {
+        append('Screenshot failed: ' + e.message);
+      }
+    };
+
+    window.triggerControl = async () => {
+      append('Control is handled by consumer; send a control_request from consumer side.');
+    };
+  </script>
+</head>
+<body>
+  <h1>Code Bridge Web Full Demo</h1>
+  <p>Host: <code>ws://localhost:9876</code> (override by setting localStorage cb_url / cb_secret).</p>
+  <button onclick="triggerConsole()">Console Logs</button>
+  <button onclick="triggerNavigation()">Navigation</button>
+  <button onclick="triggerFetches()">Fetch 200 & 404</button>
+  <button onclick="triggerScreenshot()">Screenshot</button>
+  <div id="log"></div>
+</body>
+</html>

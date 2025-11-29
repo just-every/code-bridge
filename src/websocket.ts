@@ -1,4 +1,12 @@
-import type { BridgeEvent, BridgeCapability, HelloMessage, Platform } from './types';
+import type {
+  BridgeEvent,
+  BridgeCapability,
+  HelloMessage,
+  Platform,
+  ControlRequestMessage,
+  ControlResultMessage,
+  ProtocolMessage,
+} from './types';
 import { detectPlatform } from './platform';
 
 export class BridgeWebSocket {
@@ -12,7 +20,7 @@ export class BridgeWebSocket {
   private capabilities: BridgeCapability[] = [];
   private platform: Platform;
   private projectId?: string;
-  private controlHandler: ((msg: any) => void) | null = null;
+  private controlHandler: ((msg: ControlRequestMessage) => Promise<any> | any) | null = null;
 
   constructor(url: string, secret: string, capabilities: BridgeCapability[], platform: Platform, projectId?: string) {
     this.url = url;
@@ -54,14 +62,7 @@ export class BridgeWebSocket {
         };
 
         this.ws.onmessage = (evt: any) => {
-          try {
-            const msg = JSON.parse(evt.data);
-            if (msg.type === 'control' && this.controlHandler) {
-              this.controlHandler(msg);
-            }
-          } catch (_) {
-            // ignore malformed
-          }
+          this.handleIncoming(evt.data);
         };
 
         this.ws.onerror = (error: any) => {
@@ -87,6 +88,7 @@ export class BridgeWebSocket {
       capabilities: this.capabilities,
       platform: this.platform,
       projectId: this.projectId,
+      protocol: 2,
     };
 
     // Try to get current URL/route for web/RN
@@ -105,13 +107,17 @@ export class BridgeWebSocket {
     }
   }
 
+  sendControlResult(message: ControlResultMessage): void {
+    this.sendRaw(message);
+  }
+
   sendRaw(obj: unknown): void {
     if (this.ws?.readyState === 1) {
       this.ws.send(JSON.stringify(obj));
     }
   }
 
-  setControlHandler(handler: (msg: any) => void) {
+  setControlHandler(handler: (msg: ControlRequestMessage) => Promise<any> | any) {
     this.controlHandler = handler;
   }
 
@@ -138,5 +144,36 @@ export class BridgeWebSocket {
         );
       });
     }, this.reconnectDelay);
+  }
+
+  private handleIncoming(raw: string): void {
+    try {
+      const msg: ProtocolMessage = JSON.parse(raw);
+      if (msg.type === 'control_request') {
+        if (!this.controlHandler) return;
+        Promise.resolve()
+          .then(() => this.controlHandler ? this.controlHandler(msg as ControlRequestMessage) : undefined)
+          .then((result) => {
+            const response: ControlResultMessage = {
+              type: 'control_result',
+              id: msg.id,
+              ok: true,
+              result,
+            };
+            this.sendControlResult(response);
+          })
+          .catch((err: any) => {
+            const response: ControlResultMessage = {
+              type: 'control_result',
+              id: msg.id,
+              ok: false,
+              error: { message: err?.message || String(err), stack: err?.stack },
+            };
+            this.sendControlResult(response);
+          });
+      }
+    } catch {
+      // ignore malformed
+    }
   }
 }

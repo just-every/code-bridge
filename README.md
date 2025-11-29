@@ -110,8 +110,20 @@ interface BridgeOptions {
   // Enable pageview tracking (default: false, dev-only)
   enablePageview?: boolean;
 
+  // Enable SPA navigation tracking (History API + hashchange) (default: false, dev-only)
+  enableNavigation?: boolean;
+
+  // Enable network capture (fetch/XHR in web; http/https/fetch in Node) (default: false, dev-only)
+  enableNetwork?: boolean;
+
   // Enable screenshot sending (default: false, dev-only)
   enableScreenshot?: boolean;
+
+  // Optional provider used when sending screenshots
+  screenshotProvider?: () => Promise<{ mime: string; data: string }>;
+
+  // Enable two-way control channel (default: false, dev-only)
+  enableControl?: boolean;
 }
 ```
 
@@ -145,6 +157,38 @@ This means you can safely call `startBridge({ url, secret })` in your code and i
 - Auto-enable in development when config is present
 - Stay disabled in production builds (zero overhead)
 - Be tree-shaken out by bundlers when disabled
+
+## Full-Fidelity Capture (dev-only)
+
+**Browser (console/errors/navigation/network/control + optional screenshots)**
+
+```html
+<script type="module">
+  import { startBridge } from '@just-every/code-bridge';
+  startBridge({
+    enabled: true,
+    enableNavigation: true,
+    enableNetwork: true,
+    enableControl: true,
+    enableScreenshot: true,
+    screenshotProvider: async () => ({ mime: 'image/png', data: 'iVBORw0KGgo=' }), // plug in html2canvas, etc.
+  });
+</script>
+```
+
+**Node (console/errors/network/control)**
+
+```js
+const { startBridge } = require('@just-every/code-bridge');
+const bridge = startBridge({ enabled: true, enableNetwork: true, enableControl: true });
+await fetch('https://httpbin.org/status/404'); // emits network error event
+// bridge.disconnect();
+```
+
+Notes:
+- Network capture flags 4xx/5xx as `error`-level; other responses are `info`.
+- Screenshots are only sent when both the bridge advertises `screenshot` and a consumer subscribes.
+- Control requests/responses are correlated by `id`; consumer sends `control_request`, bridge replies with `control_result`.
 
 ## Capabilities
 
@@ -495,6 +539,12 @@ wss.on('connection', (ws, req) => {
 ## Tree-Shaking
 
 The library is designed to be tree-shakeable. In production builds (when dev mode is not detected), the entire bridge becomes a no-op and can be removed by bundlers like Webpack, Rollup, or Vite.
+
+## Known Limitations (current dev build)
+
+- Browser screenshots require you to supply `screenshotProvider`; none is bundled.
+- Control channel routing depends on at least one control-capable bridge being connected; timeouts/targeting beyond basic broadcast are still being hardened.
+- `demo/web-demo.html` exercises console/error/pageview; trigger SPA navigation and network requests in your own app to observe the new navigation/network events.
 
 ## License
 

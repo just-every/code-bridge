@@ -22,11 +22,30 @@ node demo/node-demo.js
 
 You should see events being logged in the server terminal. The demo uses `enabled: true` to force the bridge on (regular dev apps auto-enable when a host is present or will spawn it if missing).
 
+**Full-fidelity Node capture (network + control):**
+
+```bash
+node -e "const { startBridge } = require('./dist'); const bridge = startBridge({ enabled: true, enableNetwork: true, enableControl: true }); fetch('https://httpbin.org/status/404'); setTimeout(() => bridge.disconnect(), 2000);"
+```
+
+This exercises console/error hooks plus the Node http/https/fetch wrappers and flags 4xx/5xx as errors.
+
 ### 3. Test with Web
 
 After building (`npm run build`), open `demo/web-demo.html` in a browser. Make sure the server is running first.
 
 Click the buttons to send different types of events. Check the browser console and server terminal for output.
+
+For SPA navigation + network capture, serve any dev app (or `demo/web-demo.html`) and include:
+
+```html
+<script type="module">
+  import { startBridge } from '../dist/index.mjs';
+  startBridge({ enabled: true, enableNavigation: true, enableNetwork: true, enableControl: true });
+</script>
+```
+
+Then trigger client-side route changes and fetch/XHR calls; 4xx/5xx responses will be emitted as `error`-level network events.
 
 ### 4. Test end-to-end with a running `code` workspace
 

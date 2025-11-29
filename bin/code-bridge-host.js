@@ -17,6 +17,8 @@ const preferredPort = portArg ? parseInt(portArg.split('=')[1], 10) : 9876;
 const codeDir = path.join(workspacePath, '.code');
 const lockFile = path.join(codeDir, 'code-bridge.lock');
 const metaFile = path.join(codeDir, 'code-bridge.json');
+const HEARTBEAT_INTERVAL_MS = 5000;
+const HEARTBEAT_STALE_MS = 15_000;
 
 // Ensure .code directory exists
 if (!fs.existsSync(codeDir)) {
@@ -30,16 +32,34 @@ function tryAcquireLock() {
     if (fs.existsSync(lockFile)) {
       const lockData = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
 
-      // Check if the process is still alive
-      try {
-        process.kill(lockData.pid, 0); // Signal 0 checks if process exists
-        console.error(`code-bridge-host is already running for this workspace (PID ${lockData.pid})`);
+      const pid = lockData.pid;
+      let alive = false;
+      if (pid) {
+        try { process.kill(pid, 0); alive = true; } catch { alive = false; }
+      }
+
+      // If meta exists, also check heartbeat staleness
+      let stale = false;
+      if (fs.existsSync(metaFile)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+          if (meta.heartbeatAt) {
+            const age = Date.now() - new Date(meta.heartbeatAt).getTime();
+            if (age > HEARTBEAT_STALE_MS) stale = true;
+          }
+        } catch (_) {}
+      }
+
+      if (alive && !stale) {
+        console.error(`code-bridge-host is already running for this workspace (PID ${pid})`);
         console.error(`Lock file: ${lockFile}`);
         process.exit(1);
-      } catch (err) {
-        // Process is dead, we can take over the lock
-        console.log(`Stale lock detected (PID ${lockData.pid}), acquiring lock...`);
       }
+
+      // Stale: cleanup and continue
+      console.log(`Stale lock detected (PID ${pid || 'unknown'}), reclaiming...`);
+      try { fs.unlinkSync(lockFile); } catch {}
+      try { fs.unlinkSync(metaFile); } catch {}
     }
 
     // Write our lock
@@ -97,10 +117,23 @@ function writeMetadata(port, secret) {
     port,
     secret,
     workspacePath,
-    startedAt: new Date().toISOString()
+    startedAt: new Date().toISOString(),
+    pid: process.pid,
+    heartbeatAt: new Date().toISOString(),
   };
   fs.writeFileSync(metaFile, JSON.stringify(metadata, null, 2));
   return metadata;
+}
+
+function startHeartbeat(metadata) {
+  return setInterval(() => {
+    try {
+      metadata.heartbeatAt = new Date().toISOString();
+      fs.writeFileSync(metaFile, JSON.stringify(metadata, null, 2));
+    } catch (err) {
+      console.error(`Failed to write heartbeat: ${err.message}`);
+    }
+  }, HEARTBEAT_INTERVAL_MS);
 }
 
 // Main server logic
@@ -116,6 +149,7 @@ async function startServer() {
 
   // Write metadata
   const metadata = writeMetadata(port, secret);
+  const heartbeatTimer = startHeartbeat(metadata);
 
   console.log(`code-bridge-host started`);
   console.log(`  Workspace: ${workspacePath}`);
@@ -133,6 +167,9 @@ async function startServer() {
   // Track per-consumer subscriptions: Map<WebSocket, {levels: string[], capabilities: string[], llm_filter: string}>
   const consumerSubscriptions = new Map();
 
+  // Track pending control requests: id -> {replyTo, origin}
+  const pendingControl = new Map();
+
   // Screenshot rate limiting: minimum 10 seconds between screenshots per bridge
   const SCREENSHOT_RATE_LIMIT_MS = 10000;
   const bridgeLastScreenshot = new Map(); // Map<WebSocket, timestamp>
@@ -145,7 +182,7 @@ async function startServer() {
   const WINDOW_LIMIT = 500;
 
   function filterEventForConsumer(message, consumerMeta) {
-    const filter = (consumerMeta.llm_filter || 'off').toLowerCase();
+    const filter = lower(consumerMeta.llm_filter || 'off');
 
     // windowed overload fallback: if too many events recently and filter not off, only allow errors
     const now = Date.now();
@@ -159,7 +196,7 @@ async function startServer() {
     }
 
     if (filter === 'off') return true;
-    const lvl = (message.level || '').toString().toLowerCase();
+    const lvl = lower(message.level || '');
     if (filter === 'minimal') {
       if (lvl === 'debug' || lvl === 'log') return false;
       return true;
@@ -171,36 +208,43 @@ async function startServer() {
     return true;
   }
 
-  // Helper: Map log levels to subscription levels
-  function getSubscriptionLevelForLogLevel(logLevel) {
-    // Map LogLevel to SubscriptionLevel hierarchy
-    // errors (most restrictive) < warn < info < trace (least restrictive)
-    switch (logLevel) {
-      case 'error':
-        return 'errors';
-      case 'warn':
-        return 'warn';
+  function lower(val) {
+    if (val === null || val === undefined) return '';
+    try { return val.toString().toLowerCase(); } catch { return ''; }
+  }
+
+  const LEVEL_ORDER = ['errors', 'warn', 'info', 'trace'];
+
+  function getSubscriptionLevelForLogLevel(logLevel = 'info') {
+    const lvl = lower(logLevel);
+    switch (lvl) {
+      case 'error': return 'errors';
+      case 'warn': return 'warn';
+      case 'debug': return 'trace';
       case 'info':
       case 'log':
-        return 'info';
-      case 'debug':
-        return 'trace';
       default:
         return 'info';
     }
   }
 
-  // Helper: Check if subscription level includes the event level
   function subscriptionIncludesLevel(subscribedLevels, eventLogLevel) {
     const eventLevel = getSubscriptionLevelForLogLevel(eventLogLevel);
-    const hierarchy = ['errors', 'warn', 'info', 'trace'];
-    const eventIndex = hierarchy.indexOf(eventLevel);
+    const eventIndex = LEVEL_ORDER.indexOf(eventLevel);
+    const levels = (subscribedLevels || ['errors']).map(lower);
+    return levels.some((sub) => LEVEL_ORDER.indexOf(sub) >= eventIndex);
+  }
 
-    // Check if any subscribed level is >= the event level
-    return subscribedLevels.some(subLevel => {
-      const subIndex = hierarchy.indexOf(subLevel);
-      return subIndex >= eventIndex;
-    });
+  function bridgeHasCapability(bridgeCaps, capability) {
+    const cap = lower(capability);
+    if (!cap) return false;
+    return (bridgeCaps || []).map(lower).includes(cap);
+  }
+
+  function consumerWantsCapability(consumerCaps, capability) {
+    const requested = (consumerCaps || []).map(lower).filter(Boolean);
+    if (!requested.length) return true; // no filter set
+    return requested.includes(lower(capability));
   }
 
   // Helper: Check if consumer should receive event based on subscription
@@ -213,18 +257,19 @@ async function startServer() {
     const consumerFilterOk = subscription ? filterEventForConsumer(message, subscription) : true;
     if (!consumerFilterOk) return false;
 
+    const effectiveLevel = message.level || 'info';
+
     // Check level filtering
-    if (message.level && !subscriptionIncludesLevel(levels, message.level)) {
+    if (!subscriptionIncludesLevel(levels, effectiveLevel)) {
       return false;
     }
 
     // Check capability filtering (if consumer requested specific capabilities)
-    const messageType = (message.type || '').toString().toLowerCase();
-    if (messageType === 'pageview' || messageType === 'screenshot' || messageType === 'control') {
-      const wants = requestedCapabilities.map((c) => c.toLowerCase());
-      if (!wants.includes(messageType)) return false;
+    const messageType = lower(message.type || '');
+    if (messageType === 'pageview' || messageType === 'screenshot' || messageType === 'control' || messageType === 'network' || messageType === 'navigation') {
+      if (!consumerWantsCapability(requestedCapabilities, messageType)) return false;
       const bridgeCaps = bridgeCapabilities.get(bridgeWs);
-      if (!bridgeCaps || !bridgeCaps.capabilities.map((c) => c.toLowerCase()).includes(messageType)) {
+      if (!bridgeHasCapability(bridgeCaps?.capabilities, messageType)) {
         return false;
       }
     } else if (requestedCapabilities.length > 0) {
@@ -292,12 +337,50 @@ async function startServer() {
             const capabilities = message.capabilities || [];
             const route = message.route;
             const url = message.url;
+            const protocol = message.protocol || 1;
+            const platform = message.platform;
+            const projectId = message.projectId;
 
-            bridgeCapabilities.set(ws, { capabilities, route, url });
-            console.log(`Bridge ${clientId} hello: capabilities=[${capabilities.join(', ')}] route=${route || 'none'} url=${url || 'none'}`);
+            bridgeCapabilities.set(ws, { capabilities, route, url, protocol, platform, projectId });
+            console.log(`Bridge ${clientId} hello: capabilities=[${capabilities.join(', ')}] route=${route || 'none'} url=${url || 'none'} proto=v${protocol}`);
 
             // Send acknowledgment
-            ws.send(JSON.stringify({ type: 'hello_ack', clientId }));
+            ws.send(JSON.stringify({ type: 'hello_ack', clientId, protocol }));
+            return;
+          }
+
+          // Handle control responses from bridges back to consumers
+          if (message.type === 'control_result') {
+            const pending = pendingControl.get(message.id);
+            if (pending && pending.replyTo?.readyState === 1) {
+              pending.replyTo.send(JSON.stringify(message));
+              pendingControl.delete(message.id);
+            }
+            return;
+          }
+
+          // Handle control requests originating from bridge -> forward to consumers
+          if (message.type === 'control_request') {
+            const serialized = JSON.stringify(message);
+            let delivered = 0;
+            consumers.forEach((consumer) => {
+              if (consumer.readyState === 1 && shouldRouteToConsumer(consumer, { ...message, level: 'info' }, ws)) {
+                consumer.send(serialized);
+                delivered += 1;
+              }
+            });
+            if (delivered > 0) {
+              pendingControl.set(message.id, { replyTo: ws, origin: 'bridge' });
+            }
+            if (delivered === 0) {
+              // No consumers; reply with error so bridge can surface
+              ws.send(JSON.stringify({
+                type: 'control_result',
+                id: message.id,
+                ok: false,
+                error: { message: 'No consumers connected for control' },
+              }));
+            }
             return;
           }
 
@@ -391,8 +474,9 @@ async function startServer() {
           if (message.type === 'subscribe') {
             const levels = message.levels || ['errors'];
             const capabilities = message.capabilities || [];
-            const llm_filter = FILTER_LEVELS.includes((message.llm_filter || 'off').toLowerCase())
-              ? message.llm_filter.toLowerCase()
+            const llm_filter_raw = lower(message.llm_filter || 'off');
+            const llm_filter = FILTER_LEVELS.includes(llm_filter_raw)
+              ? llm_filter_raw
               : 'off';
 
             consumerSubscriptions.set(ws, { levels, capabilities, llm_filter });
@@ -404,13 +488,16 @@ async function startServer() {
           }
 
           // Handle control frames from consumers -> forward to control-capable bridges
-          if (message.type === 'control') {
+          if (message.type === 'control_request' || message.type === 'control') {
+            const reqId = message.id || `${clientId}-${Date.now()}`;
+            const payload = { ...message, type: 'control_request', id: reqId };
+
             const targets = [];
-            bridges.forEach((meta, bridgeWs) => {
+            bridges.forEach((bridgeWs) => {
+              const meta = bridgeCapabilities.get(bridgeWs);
               if (
                 bridgeWs.readyState === 1 &&
-                meta.capabilities &&
-                meta.capabilities.map((c) => c.toLowerCase()).includes('control')
+                bridgeHasCapability(meta?.capabilities, 'control')
               ) {
                 targets.push(bridgeWs);
               }
@@ -419,22 +506,34 @@ async function startServer() {
             if (targets.length === 0) {
               ws.send(
                 JSON.stringify({
-                  type: 'control_error',
-                  reason: 'no_control_bridge',
-                  message: 'No bridge with control capability is connected',
+                  type: 'control_result',
+                  id: reqId,
+                  ok: false,
+                  error: { message: 'No bridge with control capability is connected' },
                 })
               );
               return;
             }
 
-            const payload = JSON.stringify(message);
-            targets.forEach((bridgeWs) => bridgeWs.send(payload));
+            pendingControl.set(reqId, { replyTo: ws, origin: 'consumer' });
+            const serialized = JSON.stringify(payload);
+            targets.forEach((bridgeWs) => bridgeWs.send(serialized));
             ws.send(
               JSON.stringify({
-                type: 'control_ack',
+                type: 'control_forwarded',
+                id: reqId,
                 delivered: targets.length,
               })
             );
+            return;
+          }
+
+          if (message.type === 'control_result') {
+            const pending = pendingControl.get(message.id);
+            if (pending && pending.replyTo?.readyState === 1) {
+              pending.replyTo.send(JSON.stringify(message));
+              pendingControl.delete(message.id);
+            }
             return;
           }
 
@@ -459,6 +558,12 @@ async function startServer() {
         consumerSubscriptions.delete(ws);
         console.log(`Consumer client disconnected: ${clientId || 'unknown'} (${bridges.size} bridges, ${consumers.size} consumers)`);
       }
+      // Drop pending control requests targeting this socket
+      pendingControl.forEach((entry, id) => {
+        if (entry.replyTo === ws) {
+          pendingControl.delete(id);
+        }
+      });
     });
 
     ws.on('error', (err) => {
@@ -473,6 +578,9 @@ async function startServer() {
   // Handle shutdown
   function shutdown() {
     console.log('\nShutting down...');
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+    }
     wss.close(() => {
       releaseLock();
       console.log('Server stopped');
@@ -490,6 +598,9 @@ async function startServer() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('exit', () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+    }
     releaseLock();
   });
 }

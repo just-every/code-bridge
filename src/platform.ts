@@ -7,6 +7,12 @@ export function detectPlatform(): Platform {
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     return 'web';
   }
+  // Cloudflare/workerd style environment: global WebSocket, no window/document/process
+  if (typeof globalThis !== 'undefined' && typeof (globalThis as any).WebSocket === 'function' &&
+      typeof window === 'undefined' && typeof document === 'undefined' &&
+      (typeof process === 'undefined' || !(process as any).versions?.node)) {
+    return 'worker';
+  }
   if (typeof process !== 'undefined' && process.versions?.node) {
     return 'node';
   }
@@ -20,16 +26,21 @@ export function isDevMode(): boolean {
     return true;
   }
 
+  // Allow forcing dev mode for environments without import.meta (e.g., Metro web)
+  if (typeof globalThis !== 'undefined' && (globalThis as any).__CODE_BRIDGE_DEV__ === true) {
+    return true;
+  }
+
+  if (typeof globalThis !== 'undefined' && (globalThis as any).__DEV__) {
+    return true;
+  }
+
   try {
     if (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV) {
       return true;
     }
   } catch {
     // ignore
-  }
-
-  if (typeof globalThis !== 'undefined' && (globalThis as any).__DEV__) {
-    return true;
   }
 
   return false;
