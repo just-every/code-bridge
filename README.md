@@ -110,10 +110,10 @@ interface BridgeOptions {
   // Enable pageview tracking (default: false, dev-only)
   enablePageview?: boolean;
 
-  // Enable SPA navigation tracking (History API + hashchange) (default: false, dev-only)
+  // Enable SPA navigation tracking (History API + hashchange) (default: true, dev-only)
   enableNavigation?: boolean;
 
-  // Enable network capture (fetch/XHR in web; http/https/fetch in Node) (default: false, dev-only)
+  // Enable network capture (fetch/XHR in web; http/https/fetch in Node) (default: true, dev-only)
   enableNetwork?: boolean;
 
   // Enable screenshot sending (default: false, dev-only)
@@ -187,6 +187,7 @@ await fetch('https://httpbin.org/status/404'); // emits network error event
 
 Notes:
 - Network capture flags 4xx/5xx as `error`-level; other responses are `info`.
+- Navigation and network capture are enabled by default; set `enableNavigation: false` or `enableNetwork: false` to opt out.
 - Screenshots are only sent when both the bridge advertises `screenshot` and a consumer subscribes.
 - Control requests/responses are correlated by `id`; consumer sends `control_request`, bridge replies with `control_result`.
 
@@ -205,9 +206,11 @@ interface HelloMessage {
 }
 ```
 
-**Default capabilities:**
+**Default capabilities (opt-out):**
 - `error` - Captures uncaught errors and unhandled rejections
 - `console` - Intercepts console.log/info/warn/error/debug calls
+- `navigation` - SPA navigation tracking (History API + hashchange); disable with `enableNavigation: false`
+- `network` - fetch/XHR (web/worker) and http/https/fetch (Node) capture; disable with `enableNetwork: false`
 
 **Optional capabilities:**
 - `pageview` - Tracks page/route changes (opt-in via `enablePageview: true`)

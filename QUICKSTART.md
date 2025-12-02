@@ -25,10 +25,10 @@ You should see events being logged in the server terminal. The demo uses `enable
 **Full-fidelity Node capture (network + control):**
 
 ```bash
-node -e "const { startBridge } = require('./dist'); const bridge = startBridge({ enabled: true, enableNetwork: true, enableControl: true }); fetch('https://httpbin.org/status/404'); setTimeout(() => bridge.disconnect(), 2000);"
+node -e "const { startBridge } = require('./dist'); const bridge = startBridge({ enabled: true, enableControl: true }); fetch('https://httpbin.org/status/404'); setTimeout(() => bridge.disconnect(), 2000);"
 ```
 
-This exercises console/error hooks plus the Node http/https/fetch wrappers and flags 4xx/5xx as errors.
+This exercises console/error hooks plus the Node http/https/fetch wrappers (network is on by default) and flags 4xx/5xx as errors.
 
 ### 3. Test with Web
 
@@ -41,7 +41,7 @@ For SPA navigation + network capture, serve any dev app (or `demo/web-demo.html`
 ```html
 <script type="module">
   import { startBridge } from '../dist/index.mjs';
-  startBridge({ enabled: true, enableNavigation: true, enableNetwork: true, enableControl: true });
+  startBridge({ enabled: true, enableControl: true });
 </script>
 ```
 
@@ -58,6 +58,8 @@ node demo/workspace-bridge-demo.js /path/to/workspace
 This will auto-connect, emit sample logs, an unhandled rejection, and an uncaught error so they appear as developer messages in your Code session. The demo uses `enabled: true` to force the bridge on.
 
 Tip: In normal dev apps, just call `startBridge()`; it will ensure a host is running (dev-only) and connect automatically. To send screenshots, enable `enableScreenshot: true` and call `sendScreenshot({ mime, data })`. To receive control commands in your app, enable `enableControl: true` and register `onControl((msg) => console.log(msg))`.
+
+Tip: Navigation and network capture are opt-out; disable with `enableNavigation: false` or `enableNetwork: false` if you don't want them.
 
 Tip: If you prefer non-interactive, you can run `code exec "echo hi"` in the same workspace; Code will subscribe as a consumer while the command runs and will receive bridge events.
 

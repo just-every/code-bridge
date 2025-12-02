@@ -580,8 +580,9 @@ export function startBridge(options: BridgeOptions = {}): BridgeConnection {
   const maxBreadcrumbs = options.maxBreadcrumbs ?? DEFAULT_MAX_BREADCRUMBS;
   const throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
   const enablePageview = options.enablePageview ?? false;
-  const enableNavigation = options.enableNavigation ?? enablePageview;
-  const enableNetwork = options.enableNetwork ?? false;
+  // Navigation and network are now opt-out (default: true)
+  const enableNavigation = options.enableNavigation ?? true;
+  const enableNetwork = options.enableNetwork ?? true;
   const enableScreenshot = options.enableScreenshot ?? Boolean(options.screenshotProvider);
   const enableControl = options.enableControl ?? false;
   const screenshotProvider = options.screenshotProvider;
