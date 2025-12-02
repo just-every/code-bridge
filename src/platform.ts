@@ -35,13 +35,5 @@ export function isDevMode(): boolean {
     return true;
   }
 
-  try {
-    if (typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV) {
-      return true;
-    }
-  } catch {
-    // ignore
-  }
-
   return false;
 }

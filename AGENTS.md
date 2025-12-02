@@ -23,6 +23,7 @@
 - Exports: favor named exports from leaf modules re-exported via `src/index.ts`.
 - Types: define shared shapes in `types.ts`; prefer `type` aliases over `interface` unless extension is required.
 - Side effects: keep modules side-effect free; `startBridge` should remain the only initializer.
+- Avoid using `import.meta` in runtime code; Metro/Hermes bundle the ESM build into non-module scripts and will throw `SyntaxError: Cannot use 'import.meta' outside a module` (we've hit this already).
 
 ## Testing Guidelines
 - Current coverage is manual via the `demo/` apps. When adding features, include minimal unit tests (Vitest/Jest acceptable) under `__tests__/` or alongside files as `*.test.ts`.
