@@ -14,11 +14,12 @@
   },
   "sideEffects": false,
   "bin": {
-    "code-bridge-host": "./bin/code-bridge-host.js"
+    "code-bridge-host": "./bin/code-bridge-host.js",
+    "code-bridge-mcp": "./bin/code-bridge-mcp.js"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsup --config tsup.config.ts",
+    "dev": "tsup --config tsup.config.ts --watch",
     "test": "node demo/node-demo.js",
     "test:unit": "vitest run",
     "typecheck": "tsc --noEmit"
@@ -39,6 +40,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
     "ws": "^8.16.0"
   },
   "repository": {

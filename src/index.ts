@@ -16,3 +16,6 @@ export type {
   ControlRequestMessage,
   ControlResultMessage,
 } from './types';
+
+export { startMcpServer } from './mcp';
+export type { McpOptions } from './mcp/types';

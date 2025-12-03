@@ -82,6 +82,30 @@ function App() {
 }
 ```
 
+### MCP (Model Context Protocol) mode for Claude Code / Gemini CLI
+
+1. Start the host in your workspace (creates `.code/code-bridge.json`):
+   ```bash
+   npx code-bridge-host
+   ```
+2. Launch the MCP server over stdio (reads the same metadata file):
+   ```bash
+   npx code-bridge-mcp
+   ```
+3. Point your MCP-capable CLI at `code-bridge-mcp` (stdio). Example Claude Desktop config snippet:
+   ```json
+   {
+     "mcpServers": {
+       "code-bridge": {
+         "command": "npx",
+         "args": ["code-bridge-mcp"],
+         "cwd": "/path/to/workspace"
+       }
+     }
+   }
+   ```
+The MCP server connects to the host as a consumer, streams bridge events as MCP notifications, exposes recent events/metadata as resources, and forwards `send_control` tool calls to connected bridges.
+
 ## Configuration Options
 
 ```typescript

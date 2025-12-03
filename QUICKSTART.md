@@ -73,6 +73,30 @@ node demo/test-subscription-flow.js
 
 This spawns one bridge and three consumers to demonstrate level and capability filtering.
 
+### 6. MCP (Claude Code / Gemini CLI) quickstart
+
+1. Ensure the host is running in your workspace (creates `.code/code-bridge.json`):
+   ```bash
+   npx code-bridge-host
+   ```
+2. Start the MCP server over stdio (connects as a consumer):
+   ```bash
+   npx code-bridge-mcp
+   ```
+3. Point your MCP-capable CLI to the command above. For Claude Desktop, add to `claude_desktop_config.json`:
+   ```json
+   {
+     "mcpServers": {
+       "code-bridge": {
+         "command": "npx",
+         "args": ["code-bridge-mcp"],
+         "cwd": "/path/to/workspace"
+       }
+     }
+   }
+   ```
+The MCP server streams live bridge events as notifications (`bridge/event`), exposes recent data as resources (`bridge://events/*`), and forwards `send_control` tool calls to connected bridges.
+
 ## Integration Guide
 
 ### Web App (Vite/React/Vue)
