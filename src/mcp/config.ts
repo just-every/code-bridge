@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { isNode, getEnv } from '../platform';
 import type { BridgeCapability, SubscriptionLevel } from '../types';
 import type { BridgeMeta, LlmFilter, McpOptions, ResolvedMcpConfig } from './types';
 
@@ -20,9 +21,9 @@ function readMetaFile(workspacePath: string): BridgeMeta | null {
 }
 
 export function resolveMcpConfig(options: McpOptions = {}): ResolvedMcpConfig {
-  const workspace = options.workspacePath || process.env.CODE_BRIDGE_WORKSPACE || process.cwd();
-  const envUrl = process.env.CODE_BRIDGE_URL;
-  const envSecret = process.env.CODE_BRIDGE_SECRET;
+  const workspace = options.workspacePath || getEnv('CODE_BRIDGE_WORKSPACE') || (isNode ? process.cwd() : '.');
+  const envUrl = getEnv('CODE_BRIDGE_URL');
+  const envSecret = getEnv('CODE_BRIDGE_SECRET');
 
   const metaFromDisk = readMetaFile(workspace);
 
@@ -47,7 +48,7 @@ export function resolveMcpConfig(options: McpOptions = {}): ResolvedMcpConfig {
 
   return {
     meta,
-    clientId: options.clientId || `mcp-${process.pid}`,
+    clientId: options.clientId || `mcp-${isNode ? process.pid : 'browser'}`,
     bufferSize,
     debug: Boolean(options.debug),
     subscription: { levels, capabilities, llm_filter },

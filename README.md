@@ -71,7 +71,8 @@ function App() {
   useEffect(() => {
     const bridge = startBridge({
       url: 'ws://localhost:9876',
-      secret: 'dev-secret',
+      // Use the secret written to .code/code-bridge.json by the host (or set CODE_BRIDGE_SECRET)
+      secret: '<copy-from-code-bridge.json>',
       projectId: 'my-rn-app',
     });
 
@@ -81,6 +82,37 @@ function App() {
   // Rest of your app
 }
 ```
+
+### Roblox / Studio (HTTP)
+
+Roblox Studio does not expose WebSockets, so use the HTTP bridge:
+
+1) Run the host: `npx code-bridge-host` (writes `.code/code-bridge.json`, defaults to port 9876). Copy the `secret` from that file, or start the host with an explicit value using `CODE_BRIDGE_SECRET=your-secret npx code-bridge-host` to keep it stable across restarts.
+2) In Studio, enable **HttpService** (Game Settings → Security → Allow HTTP Requests).
+3) Copy `lua/CodeBridge.lua` from this repo into your game (e.g., `ReplicatedStorage/CodeBridge/CodeBridge.lua` via Rojo).
+4) Start the bridge in Studio-only code:
+
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local ok, CodeBridge = pcall(require, ReplicatedStorage:WaitForChild("CodeBridge"):WaitForChild("CodeBridge"))
+if ok and RunService:IsStudio() then
+    local bridge = CodeBridge.new({
+        baseUrl = "http://127.0.0.1:9876",
+        -- Use the secret from .code/code-bridge.json or the value you set in CODE_BRIDGE_SECRET
+        secret = "<copy-from-code-bridge.json>",
+        projectId = "brainrot-base",
+        route = "server",
+        capabilities = {"console", "error"},
+    })
+    bridge:start()
+    bridge:event("server_boot", { placeId = game.PlaceId })
+end
+```
+
+The Lua client auto-captures `LogService` output and `ScriptContext.Error`, batches events, and polls control requests. It is Studio-only by default (override with `forceEnable=true`).
+
+For more detail (safety, batching, keeping Lua copies in sync across games), see `docs/roblox.md`. For other platforms and future clients, see `docs/clients.md`.
 
 ### MCP (Model Context Protocol) mode for Claude Code / Gemini CLI
 

@@ -1,4 +1,4 @@
-export type Platform = 'web' | 'node' | 'react-native' | 'worker' | 'unknown';
+export type Platform = 'web' | 'node' | 'react-native' | 'worker' | 'roblox' | 'unknown';
 
 export type LogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
 

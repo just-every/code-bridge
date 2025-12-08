@@ -5,6 +5,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
 const net = require('net');
+const http = require('http');
 
 // Parse command-line arguments
 const args = process.argv.slice(2);
@@ -59,7 +60,6 @@ function tryAcquireLock() {
       // Stale: cleanup and continue
       console.log(`Stale lock detected (PID ${pid || 'unknown'}), reclaiming...`);
       try { fs.unlinkSync(lockFile); } catch {}
-      try { fs.unlinkSync(metaFile); } catch {}
     }
 
     // Write our lock
@@ -81,9 +81,6 @@ function releaseLock() {
   try {
     if (fs.existsSync(lockFile)) {
       fs.unlinkSync(lockFile);
-    }
-    if (fs.existsSync(metaFile)) {
-      fs.unlinkSync(metaFile);
     }
   } catch (err) {
     console.error(`Error releasing lock: ${err.message}`);
@@ -108,6 +105,21 @@ async function findAvailablePort(startPort) {
 // Generate random secret
 function generateSecret() {
   return crypto.randomBytes(32).toString('hex');
+}
+
+// Reuse prior secret when available so restarts don't break existing bridges.
+function loadExistingSecret() {
+  if (!fs.existsSync(metaFile)) return null;
+  try {
+    const data = fs.readFileSync(metaFile, 'utf8');
+    const parsed = JSON.parse(data);
+    if (parsed && typeof parsed.secret === 'string' && parsed.secret.length > 0) {
+      return parsed.secret;
+    }
+  } catch (err) {
+    console.warn(`Warning: failed to read existing metadata for secret reuse: ${err.message}`);
+  }
+  return null;
 }
 
 // Write metadata file
@@ -144,8 +156,10 @@ async function startServer() {
   // Find available port
   const port = await findAvailablePort(preferredPort);
 
-  // Generate secret
-  const secret = generateSecret();
+  // Generate secret: prefer explicit env, otherwise reuse previous, otherwise random
+  const envSecret = process.env.CODE_BRIDGE_SECRET || process.env.CODE_BRIDGE_HOST_SECRET;
+  const reusedSecret = envSecret || loadExistingSecret();
+  const secret = reusedSecret || generateSecret();
 
   // Write metadata
   const metadata = writeMetadata(port, secret);
@@ -154,12 +168,21 @@ async function startServer() {
   console.log(`code-bridge-host started`);
   console.log(`  Workspace: ${workspacePath}`);
   console.log(`  Port: ${port}`);
-  console.log(`  Secret: ${secret.slice(0, 8)}...`);
+  if (envSecret) {
+    console.log(`  Secret: ${secret.slice(0, 8)}... (from CODE_BRIDGE_SECRET)`);
+  } else if (reusedSecret) {
+    console.log(`  Secret: ${secret.slice(0, 8)}... (reused)`);
+  } else {
+    console.log(`  Secret: ${secret.slice(0, 8)}... (generated)`);
+  }
   console.log(`  Metadata: ${metaFile}`);
 
   // Track connected clients
-  const bridges = new Set(); // bridge role clients
+  const bridges = new Set(); // bridge role clients (WebSocket or HTTP sessions)
   const consumers = new Set(); // consumer role clients
+
+  // HTTP bridge bookkeeping
+  const httpBridgeSessions = new Map(); // sessionId -> session
 
   // Track per-bridge capabilities: Map<WebSocket, {capabilities: string[], route?: string, url?: string}>
   const bridgeCapabilities = new Map();
@@ -171,7 +194,9 @@ async function startServer() {
   const pendingControl = new Map();
 
   // Screenshot rate limiting: minimum 10 seconds between screenshots per bridge
-  const SCREENSHOT_RATE_LIMIT_MS = 10000;
+  // Dev convenience: keep rate-limit modest but not too strict
+  // Rate-limit screenshots per bridge to reduce spam (dev-friendly)
+  const SCREENSHOT_RATE_LIMIT_MS = 2000;
   const bridgeLastScreenshot = new Map(); // Map<WebSocket, timestamp>
 
   // LLM filter / overload guard
@@ -279,8 +304,189 @@ async function startServer() {
     return true;
   }
 
-  // Create WebSocket server
-  const wss = new WebSocketServer({ port });
+  // Simple HTTP body reader
+  function readJson(req) {
+    return new Promise((resolve, reject) => {
+      let data = '';
+      req.on('data', (chunk) => { data += chunk; });
+      req.on('end', () => {
+        if (!data) return resolve({});
+        try {
+          resolve(JSON.parse(data));
+        } catch (err) {
+          reject(err);
+        }
+      });
+      req.on('error', reject);
+    });
+  }
+
+  function makeSessionId() {
+    return crypto.randomBytes(12).toString('hex');
+  }
+
+  function getHttpSession(id) {
+    return httpBridgeSessions.get(id);
+  }
+
+  function removeHttpSession(session) {
+    httpBridgeSessions.delete(session.sessionId);
+    bridges.delete(session);
+    bridgeCapabilities.delete(session);
+    bridgeLastScreenshot.delete(session);
+  }
+
+  function pruneHttpSessions() {
+    const now = Date.now();
+    httpBridgeSessions.forEach((session) => {
+      if (now - session.lastSeen > HEARTBEAT_STALE_MS) {
+        removeHttpSession(session);
+      }
+    });
+  }
+
+  function deliverToConsumers(message, bridgeRef) {
+    const payload = JSON.stringify(message);
+    let sentCount = 0;
+    consumers.forEach(consumer => {
+      if (consumer.readyState === 1 && shouldRouteToConsumer(consumer, message, bridgeRef)) {
+        consumer.send(payload);
+        sentCount++;
+      }
+    });
+    if (sentCount > 0) {
+      console.log(`Routed from bridge to ${sentCount} consumer(s): ${message.type || 'unknown'} level=${message.level || 'none'}`);
+    }
+  }
+
+  // HTTP server (shares port with WebSocket upgrade)
+  const server = http.createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const path = url.pathname;
+
+      // Basic auth check via secret header or body field
+      const secretHeader = req.headers['x-code-bridge-secret'];
+
+      if (req.method === 'POST' && path === '/bridge/connect') {
+        const body = await readJson(req);
+        if ((body.secret || secretHeader) !== secret) {
+          res.writeHead(401); res.end('unauthorized'); return;
+        }
+        const sessionId = makeSessionId();
+        const session = {
+          kind: 'http',
+          sessionId,
+          queue: [], // control queue
+          lastSeen: Date.now(),
+          readyState: 1,
+        };
+        httpBridgeSessions.set(sessionId, session);
+        bridges.add(session);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ sessionId }));
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/bridge/hello') {
+        const body = await readJson(req);
+        const session = getHttpSession(body.sessionId);
+        if (!session) { res.writeHead(404); res.end('session not found'); return; }
+        session.lastSeen = Date.now();
+        bridgeCapabilities.set(session, {
+          capabilities: body.capabilities || [],
+          route: body.route,
+          url: body.url,
+          protocol: body.protocol || 2,
+          platform: body.platform || 'roblox',
+          projectId: body.projectId,
+        });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, clientId: session.sessionId }));
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/bridge/events') {
+        const body = await readJson(req);
+        const session = getHttpSession(body.sessionId);
+        if (!session) { res.writeHead(404); res.end('session not found'); return; }
+        session.lastSeen = Date.now();
+        const events = Array.isArray(body.events) ? body.events : [];
+        events.forEach((ev) => {
+          const msg = { ...ev };
+          if (!msg.timestamp) msg.timestamp = Date.now();
+          if (!msg.level) msg.level = 'info';
+          if (!msg.type) msg.type = 'log';
+          deliverToConsumers(msg, session);
+        });
+        res.writeHead(204); res.end();
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/bridge/control/result') {
+        const body = await readJson(req);
+        const session = getHttpSession(body.sessionId);
+        if (!session) { res.writeHead(404); res.end('session not found'); return; }
+        session.lastSeen = Date.now();
+        const pending = pendingControl.get(body.id);
+        if (pending && pending.replyTo?.readyState === 1) {
+          pending.replyTo.send(JSON.stringify({
+            type: 'control_result',
+            id: body.id,
+            ok: body.ok,
+            result: body.result,
+            error: body.error,
+          }));
+          pendingControl.delete(body.id);
+        }
+        res.writeHead(204); res.end();
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/bridge/control/poll') {
+        const body = await readJson(req);
+        const session = getHttpSession(body.sessionId);
+        if (!session) { res.writeHead(404); res.end('session not found'); return; }
+        session.lastSeen = Date.now();
+        const commands = session.queue.splice(0, session.queue.length);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ commands }));
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/bridge/heartbeat') {
+        const body = await readJson(req);
+        const session = getHttpSession(body.sessionId);
+        if (!session) { res.writeHead(404); res.end('session not found'); return; }
+        session.lastSeen = Date.now();
+        res.writeHead(204); res.end();
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/bridge/disconnect') {
+        const body = await readJson(req);
+        const session = getHttpSession(body.sessionId);
+        if (session) {
+          removeHttpSession(session);
+        }
+        res.writeHead(204); res.end();
+        return;
+      }
+
+      res.writeHead(404); res.end('not found');
+    } catch (err) {
+      console.error('HTTP bridge error', err);
+      try { res.writeHead(500); res.end('error'); } catch (_) {}
+    }
+  });
+
+  // Create WebSocket server and listen
+  const wss = new WebSocketServer({ server });
+  server.listen(port, () => {
+    console.log(`HTTP+WS listening on ${port}`);
+  });
+
+  const httpPruneTimer = setInterval(pruneHttpSessions, HEARTBEAT_STALE_MS);
 
   wss.on('connection', (ws, req) => {
     let isAuthenticated = false;
@@ -331,6 +537,11 @@ async function startServer() {
         }
 
         // Handle messages from authenticated clients
+        if (message.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+
         if (role === 'bridge') {
           // Handle bridge hello frame
           if (message.type === 'hello') {
@@ -435,16 +646,22 @@ async function startServer() {
             // Update rate limit timestamp
             bridgeLastScreenshot.set(ws, now);
 
-            // Validate screenshot event shape
-            if (!message.mime || !message.data || !message.timestamp || !message.platform || !message.projectId) {
-              console.log(`Bridge ${clientId} screenshot missing required fields, dropping`);
+            // Validate screenshot event shape (tolerant for dev use)
+            if (!message.mime || !message.data) {
+              console.log(`Bridge ${clientId} screenshot missing mime/data, dropping`);
               ws.send(JSON.stringify({
                 type: 'rate_limit_notice',
                 reason: 'invalid_format',
-                message: 'Screenshot missing required fields: mime, data, timestamp, platform, projectId'
+                message: 'Screenshot missing required fields: mime, data'
               }));
               return;
             }
+
+            // Ensure required metadata is present; fill when missing
+            if (!message.timestamp) message.timestamp = Date.now();
+            if (!message.platform) message.platform = 'web';
+            if (!message.level) message.level = 'info';
+            if (!message.message) message.message = `Screenshot: ${message.route || message.url || 'unknown'}`;
 
             // Forward to interested consumers
             const payload = JSON.stringify(message);
@@ -517,7 +734,14 @@ async function startServer() {
 
             pendingControl.set(reqId, { replyTo: ws, origin: 'consumer' });
             const serialized = JSON.stringify(payload);
-            targets.forEach((bridgeWs) => bridgeWs.send(serialized));
+            targets.forEach((bridgeWs) => {
+              if (bridgeWs.kind === 'http') {
+                // queue control for HTTP bridge to pick up via poll
+                bridgeWs.queue.push(payload);
+              } else {
+                bridgeWs.send(serialized);
+              }
+            });
             ws.send(
               JSON.stringify({
                 type: 'control_forwarded',
@@ -581,10 +805,13 @@ async function startServer() {
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
     }
-    wss.close(() => {
-      releaseLock();
-      console.log('Server stopped');
-      process.exit(0);
+    if (httpPruneTimer) clearInterval(httpPruneTimer);
+    server.close(() => {
+      wss.close(() => {
+        releaseLock();
+        console.log('Server stopped');
+        process.exit(0);
+      });
     });
 
     // Force exit after 5 seconds
@@ -598,9 +825,8 @@ async function startServer() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('exit', () => {
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-    }
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (httpPruneTimer) clearInterval(httpPruneTimer);
     releaseLock();
   });
 }

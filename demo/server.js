@@ -46,6 +46,11 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
+      if (event.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+        return;
+      }
+
       // Log received event
       console.log(`[${clientId}] Event received:`);
       console.log(`  Type: ${event.type}`);

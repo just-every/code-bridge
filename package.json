@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.mjs",
+      "require": "./dist/browser.js"
     }
   },
   "sideEffects": false,
@@ -20,8 +25,10 @@
   "scripts": {
     "build": "tsup --config tsup.config.ts",
     "dev": "tsup --config tsup.config.ts --watch",
-    "test": "node demo/node-demo.js",
+    "test": "vitest run",
     "test:unit": "vitest run",
+    "test:demo": "node demo/node-demo.js",
+    "copy:lua-client": "node tools/copy-lua-client.js",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

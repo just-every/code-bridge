@@ -8,7 +8,7 @@ import type {
   NavigationInfo,
   ControlRequestMessage,
 } from './types';
-import { detectPlatform, isDevMode } from './platform';
+import { detectPlatform, isDevMode, isNode, getEnv, getEnvObj } from './platform';
 import { BridgeWebSocket } from './websocket';
 import { Throttler } from './throttle';
 
@@ -554,7 +554,7 @@ export function startBridge(options: BridgeOptions = {}): BridgeConnection {
   // 3. Explicit enabled: true → force on
   // 4. Dev mode + (url or secret provided) → auto-enable
   // 5. Otherwise → disabled (production default)
-  const hasCodeBridgeEnv = typeof process !== 'undefined' && process.env.CODE_BRIDGE === '1';
+  const hasCodeBridgeEnv = getEnv('CODE_BRIDGE') === '1';
   const hasExplicitConfig = options.url !== undefined || options.secret !== undefined;
   const shouldEnable = hasCodeBridgeEnv
     ? true
@@ -943,7 +943,7 @@ export function startBridge(options: BridgeOptions = {}): BridgeConnection {
       data: params.data,
       url: finalUrl,
       route: finalRoute,
-    });
+    }, { bypassThrottle: true });
   }
 
   // Return connection handle
@@ -978,7 +978,12 @@ function ensureHostIfPossible(options: BridgeOptions): HostMeta | undefined {
   if (!isDevMode()) return undefined;
 
   // Host auto-spawn only makes sense in Node environments; browsers/React Native/Workers skip
-  if (typeof process === 'undefined' || !process.versions?.node) {
+  if (!isNode) {
+    return undefined;
+  }
+
+  // If process is unavailable (e.g., stubbed out in browser-like tests), skip host ensure.
+  if (typeof process === 'undefined') {
     return undefined;
   }
 
@@ -994,7 +999,9 @@ function ensureHostIfPossible(options: BridgeOptions): HostMeta | undefined {
     return undefined;
   }
 
-  const workspace = process.cwd();
+  const workspace = typeof process.cwd === 'function'
+    ? process.cwd()
+    : process?.cwd?.() ?? '.';
   const lockPath = path.join(workspace, HOST_LOCK);
   const metaPath = path.join(workspace, HOST_META);
 
@@ -1009,7 +1016,7 @@ function ensureHostIfPossible(options: BridgeOptions): HostMeta | undefined {
         cwd: workspace,
         stdio: 'ignore',
         detached: true,
-        env: process.env,
+        env: isNode ? getEnvObj() : undefined,
       });
       child.unref();
 

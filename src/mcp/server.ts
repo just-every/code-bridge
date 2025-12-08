@@ -15,7 +15,9 @@ import type { McpOptions } from './types';
 import { KNOWN_RESOURCES } from './types';
 import { validateControlArgs, validateSubscribeArgs } from './validation';
 
-const VERSION = process.env.npm_package_version || '0.0.0';
+import { getEnv } from '../platform';
+
+const VERSION = getEnv('npm_package_version') || '0.0.0';
 
 export interface McpServer {
   stop: () => Promise<void>;
