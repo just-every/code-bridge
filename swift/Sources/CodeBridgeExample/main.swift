@@ -10,7 +10,7 @@ struct ExampleApp {
         try? await client.start()
         try? await client.sendConsole("hello from swift")
         try? await client.sendError("sample error")
-        Thread.sleep(forTimeInterval: 0.5)
-        client.stop()
+        try? await Task.sleep(for: .milliseconds(500))
+        await client.stop()
     }
 }
