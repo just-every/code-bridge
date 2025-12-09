@@ -1,0 +1,6 @@
+{
+  "type": "control_result",
+  "id": "fixture-req",
+  "ok": false,
+  "error": { "message": "permission denied", "stack": "Error: permission denied\n    at handler" }
+}

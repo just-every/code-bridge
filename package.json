@@ -27,9 +27,17 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "test": "vitest run",
     "test:unit": "vitest run",
+    "protocol:test-server": "node tools/protocol-test-server.js",
     "test:demo": "node demo/node-demo.js",
     "copy:lua-client": "node tools/copy-lua-client.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sdk:python": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; CODE_BRIDGE_URL=ws://localhost:9877 CODE_BRIDGE_SECRET=dev-secret pip install -r python/requirements.txt >/dev/null && CODE_BRIDGE_URL=ws://localhost:9877 CODE_BRIDGE_SECRET=dev-secret pytest python/tests; status=$?; kill $pid || true; exit $status'",
+    "sdk:go": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; CODE_BRIDGE_URL=ws://localhost:9877 CODE_BRIDGE_SECRET=dev-secret (cd go && go test ./...); status=$?; kill $pid || true; exit $status'",
+    "sdk:php": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; cd php && composer install --no-interaction --no-progress && CODE_BRIDGE_URL=ws://localhost:9877 CODE_BRIDGE_SECRET=dev-secret php tests/smoke.php; status=$?; kill $pid || true; exit $status'",
+    "sdk:ruby": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; cd ruby && bundle install --quiet && CODE_BRIDGE_URL=ws://localhost:9877 CODE_BRIDGE_SECRET=dev-secret ruby tests/smoke.rb; status=$?; kill $pid || true; exit $status'",
+    "sdk:rust": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; cd rust && cargo test -- --nocapture; status=$?; kill $pid || true; exit $status'",
+    "sdk:swift": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; cd swift && CODE_BRIDGE_URL=ws://localhost:9877 CODE_BRIDGE_SECRET=dev-secret swift test; status=$?; kill $pid || true; exit $status'",
+    "sdk:java": "sh -c 'node tools/protocol-test-server.js --port=9877 --secret=dev-secret >/tmp/cb-server.log 2>&1 & pid=$!; cd java && mvn -q test; status=$?; kill $pid || true; exit $status'"
   },
   "keywords": [
     "development",
@@ -41,6 +49,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "ajv": "^8.17.1",
     "@types/node": "^24.10.1",
     "vitest": "^1.4.0",
     "tsup": "^8.0.0",

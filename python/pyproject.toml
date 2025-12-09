@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-bridge-client"
+version = "0.0.1"
+description = "Minimal Python client for Code Bridge protocol v2"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["websockets>=12"]
+authors = [{name = "Code Bridge"}]
+license = {text = "MIT"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["code_bridge*"]

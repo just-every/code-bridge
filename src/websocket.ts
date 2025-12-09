@@ -8,6 +8,14 @@ import type {
   ProtocolMessage,
 } from './types';
 import { detectPlatform } from './platform';
+import {
+  PROTOCOL_VERSION,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  RECONNECT_INITIAL_DELAY_MS,
+  RECONNECT_MAX_DELAY_MS,
+  BUFFER_LIMIT,
+} from './constants';
 
 export class BridgeWebSocket {
   private ws: WebSocket | any = null;
@@ -15,13 +23,13 @@ export class BridgeWebSocket {
   private readonly secret: string;
   // reconnect / heartbeat
   private reconnectTimeout: any = null;
-  private reconnectDelay = 1000;
-  private maxReconnectDelay = 30000;
+  private reconnectDelay = RECONNECT_INITIAL_DELAY_MS;
+  private maxReconnectDelay = RECONNECT_MAX_DELAY_MS;
   private heartbeatInterval: any = null;
   private heartbeatTimeout: any = null;
-  private readonly heartbeatIntervalMs = 15_000;
+  private readonly heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
   // Keep timeout comfortably larger than interval to avoid false disconnects when pongs arrive on time.
-  private readonly heartbeatTimeoutMs = 30_000;
+  private readonly heartbeatTimeoutMs = HEARTBEAT_TIMEOUT_MS;
   private helloSent = false;
   private capabilities: BridgeCapability[] = [];
   private platform: Platform;
@@ -29,7 +37,7 @@ export class BridgeWebSocket {
   private controlHandler: ((msg: ControlRequestMessage) => Promise<any> | any) | null = null;
   // buffer
   private buffer: BridgeEvent[] = [];
-  private readonly bufferLimit = 200;
+  private readonly bufferLimit = BUFFER_LIMIT;
   private dropped = 0;
 
   constructor(url: string, secret: string, capabilities: BridgeCapability[], platform: Platform, projectId?: string) {
@@ -104,7 +112,7 @@ export class BridgeWebSocket {
       capabilities: this.capabilities,
       platform: this.platform,
       projectId: this.projectId,
-      protocol: 2,
+      protocol: PROTOCOL_VERSION,
     };
 
     // Try to get current URL/route for web/RN

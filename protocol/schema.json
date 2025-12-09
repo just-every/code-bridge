@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://just.every/code-bridge/protocol/schema.json",
+  "title": "Code Bridge Protocol v2",
+  "type": "object",
+  "oneOf": [
+    {
+      "title": "Auth",
+      "type": "object",
+      "required": ["type", "secret", "role"],
+      "properties": {
+        "type": { "const": "auth" },
+        "secret": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["bridge", "consumer"] },
+        "clientId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "Hello",
+      "type": "object",
+      "required": ["type", "capabilities", "platform", "protocol"],
+      "properties": {
+        "type": { "const": "hello" },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "platform": { "type": "string" },
+        "projectId": { "type": ["string", "null"] },
+        "protocol": { "type": "integer", "minimum": 1 },
+        "route": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "Ping",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "ping" } },
+      "additionalProperties": false
+    },
+    {
+      "title": "Pong",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "pong" } },
+      "additionalProperties": false
+    },
+    {
+      "title": "Control Request",
+      "type": "object",
+      "required": ["type", "id", "action"],
+      "properties": {
+        "type": { "const": "control_request" },
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "args": { "type": ["object", "null"] }
+      },
+      "additionalProperties": true
+    },
+    {
+      "title": "Control Result",
+      "type": "object",
+      "required": ["type", "id", "ok"],
+      "properties": {
+        "type": { "const": "control_result" },
+        "id": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "result": { "type": ["object", "null"] },
+        "error": {
+          "type": "object",
+          "properties": {
+            "message": { "type": "string" },
+            "stack": { "type": "string" }
+          },
+          "required": ["message"],
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  ]
+}

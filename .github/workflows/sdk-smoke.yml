@@ -1,0 +1,42 @@
+name: sdk-smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  sdk-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: php
+            os: ubuntu-latest
+            run: npm run sdk:php
+          - language: ruby
+            os: ubuntu-latest
+            run: npm run sdk:ruby
+          - language: rust
+            os: ubuntu-latest
+            run: npm run sdk:rust
+          - language: java
+            os: ubuntu-latest
+            run: npm run sdk:java
+          - language: swift
+            os: macos-latest
+            run: npm run sdk:swift
+          - language: python
+            os: ubuntu-latest
+            run: npm run sdk:python
+          - language: go
+            os: ubuntu-latest
+            run: npm run sdk:go
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Run smoke for ${{ matrix.language }}
+        run: ${{ matrix.run }}

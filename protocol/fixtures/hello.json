@@ -1,0 +1,9 @@
+{
+  "type": "hello",
+  "capabilities": ["console", "error", "navigation"],
+  "platform": "web",
+  "projectId": "fixture-project",
+  "protocol": 2,
+  "url": "http://localhost/",
+  "route": "/"
+}

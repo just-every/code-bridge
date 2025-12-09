@@ -1,0 +1,6 @@
+{
+  "type": "control_result",
+  "id": "fixture-req",
+  "ok": true,
+  "result": { "status": "captured", "url": "http://localhost/screenshot.png" }
+}

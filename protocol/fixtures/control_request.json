@@ -1,0 +1,6 @@
+{
+  "type": "control_request",
+  "id": "fixture-req",
+  "action": "screenshot",
+  "args": { "mime": "image/png", "data": "<base64>" }
+}
