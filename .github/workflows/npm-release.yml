@@ -57,12 +57,17 @@ jobs:
         run: npm run build
 
       - name: Publish
+        if: github.event_name != 'push'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
+      - name: Skip publish on push
+        if: github.event_name == 'push'
+        run: echo "Skipping npm publish on push events"
+
       - name: Commit version bump
-        if: steps.version.outputs.changed == 'true'
+        if: github.event_name != 'push' && steps.version.outputs.changed == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
