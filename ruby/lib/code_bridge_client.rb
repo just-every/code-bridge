@@ -72,9 +72,9 @@ module CodeBridge
     def connect_once
       @ws = WebSocket::Client::Simple.connect(@url, headers: { 'X-Bridge-Secret' => @secret })
       client = self
-      @ws.on(:open) { client.mark_connected }
-      @ws.on(:message) { |msg| client.handle_message(msg.data) }
-      @ws.on(:close) { client.handle_close }
+      @ws.on(:open) { client.send(:mark_connected) }
+      @ws.on(:message) { |msg| client.send(:handle_message, msg.data) }
+      @ws.on(:close) { client.send(:handle_close) }
       @last_pong = Time.now
       send_json(type: 'auth', secret: @secret, role: 'bridge')
       send_json(type: 'hello', capabilities: @capabilities, platform: 'ruby', projectId: @project_id, protocol: PROTOCOL_VERSION)
