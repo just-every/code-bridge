@@ -1,5 +1,6 @@
 require 'websocket-client-simple'
 require 'json'
+require 'thread'
 
 module CodeBridge
   PROTOCOL_VERSION = 2
@@ -20,10 +21,14 @@ module CodeBridge
       @heartbeat_timeout = heartbeat_timeout
       @backoff_initial = backoff_initial
       @backoff_max = backoff_max
+      @mutex = Mutex.new
+      @connected_cv = ConditionVariable.new
+      @connected = false
     end
 
     def start
       @stopped = false
+      @connected = false
       @backoff = @backoff_initial
       connect_with_retry
     end
@@ -32,6 +37,10 @@ module CodeBridge
       @heartbeat_thread&.kill
       @monitor_thread&.kill
       @ws&.close
+      @mutex.synchronize do
+        @connected = false
+        @connected_cv.broadcast
+      end
       @stopped = true
     end
 
@@ -62,6 +71,7 @@ module CodeBridge
 
     def connect_once
       @ws = WebSocket::Client::Simple.connect(@url, headers: { 'X-Bridge-Secret' => @secret })
+      @ws.on(:open) { mark_connected }
       @ws.on(:message) { |msg| handle_message(msg.data) }
       @ws.on(:close) { handle_close }
       @last_pong = Time.now
@@ -87,6 +97,7 @@ module CodeBridge
 
     def handle_close
       return if @stopped
+      @mutex.synchronize { @connected = false }
       @heartbeat_thread&.kill
       @monitor_thread&.kill
       connect_with_retry
@@ -114,7 +125,27 @@ module CodeBridge
     end
 
     def send_json(hash)
-      @ws.send(JSON.dump(hash))
+      return unless wait_until_connected
+      @ws&.send(JSON.dump(hash))
+    end
+
+    def wait_until_connected(timeout: 5)
+      deadline = Time.now + timeout
+      @mutex.synchronize do
+        until @connected
+          remaining = deadline - Time.now
+          return false if remaining <= 0
+          @connected_cv.wait(@mutex, remaining)
+        end
+        true
+      end
+    end
+
+    def mark_connected
+      @mutex.synchronize do
+        @connected = true
+        @connected_cv.broadcast
+      end
     end
 
     def now_ms
