@@ -8,6 +8,6 @@ final class CodeBridgeClientTests: XCTestCase {
         let client = CodeBridgeClient(config: BridgeConfig(url: url, secret: secret, projectId: "swift-test"))
         try await client.start()
         try await client.sendConsole("swift smoke")
-        client.stop()
+        await client.stop()
     }
 }

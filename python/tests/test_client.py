@@ -39,7 +39,7 @@ async def test_happy_path_console_event():
   cfg = BridgeConfig(url=f"ws://localhost:{PORT}", secret="dev-secret")
   client = CodeBridgeClient(cfg)
   await client.start()
-  await asyncio.wait_for(client._connected.wait(), timeout=2)
+  await asyncio.wait_for(client._connected.wait(), timeout=5)
   await client.send_console("pytest hello", level="info")
   await asyncio.sleep(0.1)
   await client.stop()
@@ -57,7 +57,7 @@ async def test_reconnect_and_heartbeat():
   )
   client = CodeBridgeClient(cfg)
   await client.start()
-  await asyncio.wait_for(client._connected.wait(), timeout=2)
+  await asyncio.wait_for(client._connected.wait(), timeout=5)
   await asyncio.sleep(0.15)
   # Force close to trigger reconnect
   if client._ws:

@@ -43,7 +43,15 @@ func TestHappyPath(t *testing.T) {
   go func() {
     _ = client.Start(ctx)
   }()
-  time.Sleep(1500 * time.Millisecond)
+  for i := 0; i < 30; i++ {
+    if client.conn != nil {
+      break
+    }
+    time.Sleep(100 * time.Millisecond)
+  }
+  if client.conn == nil {
+    t.Fatalf("client never connected")
+  }
   if err := client.SendConsole("info", "hello"); err != nil {
     t.Fatalf("send failed: %v", err)
   }
