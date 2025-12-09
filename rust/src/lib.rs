@@ -5,7 +5,6 @@ use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::time;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use url::Url;
 
 pub const PROTOCOL_VERSION: u64 = 2;
 pub const HEARTBEAT_INTERVAL_MS: u64 = 15_000;
@@ -63,13 +62,13 @@ impl BridgeClient {
     pub async fn connect(
         &self,
     ) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>, BridgeError> {
-        let (mut ws, _) = connect_async(Url::parse(&self.cfg.url)?).await?;
+        let (mut ws, _) = connect_async(&self.cfg.url).await?;
         ws.send(Message::Text(
-            json!({"type":"auth","secret":self.cfg.secret,"role":"bridge"}).to_string(),
+            json!({"type":"auth","secret":self.cfg.secret,"role":"bridge"}).to_string().into(),
         ))
         .await?;
         ws.send(Message::Text(
-            json!({"type":"hello","capabilities":self.cfg.capabilities,"platform":"rust","projectId":self.cfg.project_id,"protocol":PROTOCOL_VERSION}).to_string(),
+            json!({"type":"hello","capabilities":self.cfg.capabilities,"platform":"rust","projectId":self.cfg.project_id,"protocol":PROTOCOL_VERSION}).to_string().into(),
         ))
         .await?;
         Ok(ws)
@@ -81,37 +80,39 @@ impl BridgeClient {
             match self.connect().await {
                 Ok(mut ws) => {
                     delay = Duration::from_millis(self.cfg.backoff_initial_ms);
-                    let hb_interval = self.cfg.heartbeat_interval_ms;
-                    let hb_timeout = self.cfg.heartbeat_timeout_ms;
-                    let hb = tokio::spawn(async move {
-                        let mut interval = time::interval(Duration::from_millis(hb_interval));
-                        loop {
-                            interval.tick().await;
-                            if ws.send(Message::Text(json!({"type":"ping"}).to_string())).await.is_err() {
-                                return;
-                            }
+                    loop {
+                        if ws
+                            .send(Message::Text(json!({"type":"ping"}).to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            break;
                         }
-                    });
-                    let reader = tokio::spawn(async move {
-                        loop {
-                            match time::timeout(Duration::from_millis(hb_timeout), ws.next()).await {
-                                Ok(Some(Ok(msg))) => {
-                                    if let Message::Text(t) = msg {
-                                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
-                                            if v.get("type").and_then(|t| t.as_str()) == Some("ping") {
-                                                let _ = ws.send(Message::Text(json!({"type":"pong"}).to_string())).await;
-                                            }
-                                        }
+
+                        match time::timeout(
+                            Duration::from_millis(self.cfg.heartbeat_timeout_ms),
+                            ws.next(),
+                        )
+                        .await
+                        {
+                            Ok(Some(Ok(Message::Text(t)))) => {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+                                    if v.get("type").and_then(|t| t.as_str()) == Some("ping") {
+                                        let _ = ws
+                                            .send(Message::Text(json!({"type":"pong"}).to_string().into()))
+                                            .await;
                                     }
                                 }
-                                _ => {
-                                    let _ = ws.close(None).await;
-                                    return;
-                                }
+                            }
+                            Ok(Some(Ok(_))) => {}
+                            _ => {
+                                let _ = ws.close(None).await;
+                                break;
                             }
                         }
-                    });
-                    let _ = tokio::join!(hb, reader);
+
+                        time::sleep(Duration::from_millis(self.cfg.heartbeat_interval_ms)).await;
+                    }
                 }
                 Err(_) => {}
             }
@@ -127,7 +128,7 @@ impl BridgeClient {
         message: &str,
     ) -> Result<(), BridgeError> {
         ws.send(Message::Text(
-            json!({"type":"console","level":level,"message":message,"timestamp":now_ms()}).to_string(),
+            json!({"type":"console","level":level,"message":message,"timestamp":now_ms()}).to_string().into(),
         ))
         .await?;
         Ok(())
@@ -139,7 +140,7 @@ impl BridgeClient {
         message: &str,
     ) -> Result<(), BridgeError> {
         ws.send(Message::Text(
-            json!({"type":"error","message":message,"timestamp":now_ms()}).to_string(),
+            json!({"type":"error","message":message,"timestamp":now_ms()}).to_string().into(),
         ))
         .await?;
         Ok(())
@@ -152,7 +153,7 @@ impl BridgeClient {
         let mut interval = time::interval(Duration::from_millis(HEARTBEAT_INTERVAL_MS));
         loop {
             interval.tick().await;
-            ws.send(Message::Text(json!({"type":"ping"}).to_string())).await?;
+            ws.send(Message::Text(json!({"type":"ping"}).to_string().into())).await?;
         }
     }
 }

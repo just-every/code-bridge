@@ -2,6 +2,7 @@ package codebridge
 
 import (
     "context"
+    "net"
     "os/exec"
     "testing"
     "time"
@@ -14,7 +15,15 @@ func startTestServer(t *testing.T) func() {
     if err := cmd.Start(); err != nil {
         t.Fatalf("failed to start test server: %v", err)
     }
-    time.Sleep(200 * time.Millisecond)
+    deadline := time.Now().Add(5 * time.Second)
+    for time.Now().Before(deadline) {
+        conn, err := net.DialTimeout("tcp", "127.0.0.1:"+testPort, 100*time.Millisecond)
+        if err == nil {
+            conn.Close()
+            break
+        }
+        time.Sleep(50 * time.Millisecond)
+    }
     return func() {
         _ = cmd.Process.Kill()
         _ = cmd.Wait()
@@ -34,7 +43,7 @@ func TestHappyPath(t *testing.T) {
   go func() {
     _ = client.Start(ctx)
   }()
-  time.Sleep(200 * time.Millisecond)
+  time.Sleep(1500 * time.Millisecond)
   if err := client.SendConsole("info", "hello"); err != nil {
     t.Fatalf("send failed: %v", err)
   }

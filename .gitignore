@@ -27,6 +27,7 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 *.lcov
+rust/target/
 
 # Code Bridge runtime metadata
 .code/

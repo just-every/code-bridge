@@ -87,7 +87,7 @@ class CodeBridgeClient:
     await self._flush_buffer()
 
   async def _flush_buffer(self):
-    if not self._ws or self._ws.closed:
+    if self._is_ws_closed():
       return
     while self._buffer:
       ev = self._buffer.pop(0)
@@ -101,11 +101,9 @@ class CodeBridgeClient:
   async def _heartbeat_loop(self):
     try:
       while True:
-        if not self._ws or self._ws.closed:
+        if self._is_ws_closed():
           return
         await self._ws.send(json.dumps({"type": "ping"}))
-        self._pong_deadline = asyncio.get_event_loop().time() + (self.config.heartbeat_timeout_ms / 1000)
-        await asyncio.wait_for(self._wait_for_pong(), timeout=self.config.heartbeat_timeout_ms / 1000)
         await asyncio.sleep(self.config.heartbeat_interval_ms / 1000)
     except asyncio.TimeoutError:
       self._log("heartbeat timeout; closing")
@@ -114,30 +112,37 @@ class CodeBridgeClient:
     except asyncio.CancelledError:
       pass
 
-  async def _wait_for_pong(self):
-    if not self._ws:
-      return
-    while True:
-      msg = await self._ws.recv()
-      try:
-        data = json.loads(msg)
-      except Exception:
-        continue
-      if data.get("type") == "ping":
-        await self._ws.send(json.dumps({"type": "pong"}))
-      if data.get("type") == "pong":
-        return
-
   def _log(self, msg: str):
     if self.config.logger:
       self.config.logger(msg)
+
+  def _is_ws_closed(self) -> bool:
+    if not self._ws:
+      return True
+    closed = getattr(self._ws, "closed", None)
+    if closed is not None:
+      return bool(closed)
+    state = getattr(self._ws, "state", None)
+    try:
+      from websockets.protocol import State  # type: ignore
+      if state in (State.CLOSING, State.CLOSED):
+        return True
+    except Exception:
+      if state in ("CLOSING", "CLOSED"):
+        return True
+    return False
 
   async def _run_loop(self):
     delay = self.config.backoff_initial_ms / 1000
     while not self._stopped.is_set():
       try:
         self._log(f"connecting to {self.config.url}")
-        self._ws = await websockets.connect(self.config.url, extra_headers={"X-Bridge-Secret": self.config.secret})
+        headers = {"X-Bridge-Secret": self.config.secret}
+        try:
+          self._ws = await websockets.connect(self.config.url, extra_headers=headers)
+        except TypeError:
+          # websockets>=15 renamed extra_headers->additional_headers
+          self._ws = await websockets.connect(self.config.url, additional_headers=headers)
         await self._send({"type": "auth", "secret": self.config.secret, "role": "bridge"})
         await self._send({
           "type": "hello",
@@ -146,14 +151,21 @@ class CodeBridgeClient:
           "projectId": self.config.project_id,
           "protocol": PROTOCOL_VERSION,
         })
+        self._log("connected")
         self._connected.set()
         delay = self.config.backoff_initial_ms / 1000
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self._recv_task = asyncio.create_task(self._drain_loop())
-        await asyncio.wait(
+        done, pending = await asyncio.wait(
           [self._heartbeat_task, self._recv_task],
           return_when=asyncio.FIRST_EXCEPTION,
         )
+        for task in done:
+          if task.exception():
+            self._log(f"task exception: {task.exception()}")
+            raise task.exception()
+        for task in pending:
+          task.cancel()
       except Exception as e:
         self._log(f"connection failed: {e}")
       finally:
@@ -161,6 +173,7 @@ class CodeBridgeClient:
         if self._ws:
           with contextlib.suppress(Exception):
             await self._ws.close()
+          self._log(f"closed: code={getattr(self._ws, 'close_code', None)} reason={getattr(self._ws, 'close_reason', None)}")
         self._ws = None
         if self._heartbeat_task:
           self._heartbeat_task.cancel()
@@ -173,7 +186,7 @@ class CodeBridgeClient:
 
   async def _drain_loop(self):
     while not self._stopped.is_set():
-      if not self._ws:
+      if self._is_ws_closed():
         return
       try:
         msg = await self._ws.recv()

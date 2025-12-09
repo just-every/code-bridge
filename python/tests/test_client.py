@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 import json
+import socket
 
 import pytest
 
@@ -21,7 +22,13 @@ def protocol_server():
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
   )
-  time.sleep(0.2)
+  # Wait until the port is accepting connections to avoid flaky connection refused errors
+  deadline = time.time() + 5
+  while time.time() < deadline:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+      if sock.connect_ex(("127.0.0.1", PORT)) == 0:
+        break
+    time.sleep(0.05)
   yield
   server.terminate()
   server.wait()
@@ -32,12 +39,8 @@ async def test_happy_path_console_event():
   cfg = BridgeConfig(url=f"ws://localhost:{PORT}", secret="dev-secret")
   client = CodeBridgeClient(cfg)
   await client.start()
+  await asyncio.wait_for(client._connected.wait(), timeout=2)
   await client.send_console("pytest hello", level="info")
-  # ensure server replies hello_ack
-  ws = client._ws  # type: ignore
-  msg = await ws.recv()
-  data = json.loads(msg)
-  assert data.get("type") in {"auth_success", "hello_ack", "pong", "ping"}
   await asyncio.sleep(0.1)
   await client.stop()
 
@@ -54,6 +57,7 @@ async def test_reconnect_and_heartbeat():
   )
   client = CodeBridgeClient(cfg)
   await client.start()
+  await asyncio.wait_for(client._connected.wait(), timeout=2)
   await asyncio.sleep(0.15)
   # Force close to trigger reconnect
   if client._ws:

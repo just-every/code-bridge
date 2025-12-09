@@ -10,6 +10,10 @@ let package = Package(
     ],
     targets: [
         .target(name: "CodeBridgeClient"),
-        .executableTarget(name: "CodeBridgeExample", dependencies: ["CodeBridgeClient"])
+        .executableTarget(name: "CodeBridgeExample", dependencies: ["CodeBridgeClient"]),
+        .testTarget(
+            name: "CodeBridgeClientTests",
+            dependencies: ["CodeBridgeClient"]
+        )
     ]
 )
