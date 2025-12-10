@@ -1,21 +1,49 @@
-# PHP Quickstart (skeleton)
+# PHP Quickstart
+
+Status: **Experimental** (no heartbeat or reconnect yet; keep sessions short)
 
 ## Install
-Registry: `composer require just-every/code-bridge-php` (after publishing)
-Dev: `cd php && composer install`
-One-liner dev: `npm run sdk:php`
+- Published (after release): `composer require just-every/code-bridge-php`
+- From repo for dev/testing:
+  ```bash
+  cd php
+  composer install
+  ```
 
-## Configure
-Set `CODE_BRIDGE_URL` and `CODE_BRIDGE_SECRET` (e.g., with `.env` or environment variables).
+## Run the example
+```bash
+npx code-bridge-host
+export CODE_BRIDGE_URL=$(node -p "require('./.code/code-bridge.json').url")
+export CODE_BRIDGE_SECRET=$(node -p "require('./.code/code-bridge.json').secret")
+php php/examples/basic.php
+```
 
-## Initialize
-Create a client with `url`, `secret`, optional `projectId`, and desired `capabilities`.
+## Embed in your app
+```php
+use CodeBridge\BridgeConfig;
+use CodeBridge\Client;
 
-## Send First Event
-Send a simple console/log event (level/message) and ensure it uses the protocol `hello` with `protocol` version.
+$client = new Client(new BridgeConfig(
+    getenv('CODE_BRIDGE_URL'),
+    getenv('CODE_BRIDGE_SECRET'),
+    'php-app',
+    ['console', 'error']
+));
 
-## Verify
-Run the host or `npm run protocol:test-server`; confirm the event arrives.
+$client->start();
+$client->sendConsole('hello from php');
+$client->sendError('sample error');
+$client->stop();
+```
 
-## Next Steps
-Integrate with your framework/logger, add error capture, and wire control handlers as needed.
+## API surface
+- `start()` → opens WS, sends `auth` + `hello` (protocol 2)
+- `sendConsole(message, level='info')`
+- `sendError(message)`
+- `stop()` → closes WS
+- Heartbeat/reconnect: **not implemented yet**
+
+## Notes & limits
+- No buffering; send assumes an open connection
+- Console + error events only
+- Use env `CODE_BRIDGE_URL` / `CODE_BRIDGE_SECRET` (defaults: `ws://localhost:9877`, `dev-secret`)

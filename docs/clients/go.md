@@ -1,20 +1,44 @@
-# Go Quickstart (skeleton)
+# Go Quickstart
+
+Status: **Preview** (heartbeat 15s/30s, reconnect with 1s→30s backoff, no buffering)
 
 ## Install
-Registry: `go install github.com/just-every/code-bridge/go/codebridge@latest`
-One-liner dev: `npm run sdk:go`
+- Published: `go install github.com/just-every/code-bridge/go/codebridge@latest`
+- From repo: `cd go && go test ./...` (uses module path `github.com/just-every/code-bridge/go/codebridge`)
 
-## Configure
-Set `CODE_BRIDGE_URL` and `CODE_BRIDGE_SECRET` in env; pass into options.
+## Run the example
+```bash
+npx code-bridge-host
+export CODE_BRIDGE_URL=$(node -p "require('./.code/code-bridge.json').url")
+export CODE_BRIDGE_SECRET=$(node -p "require('./.code/code-bridge.json').secret")
+go run go/examples/main.go
+```
 
-## Initialize
-Create/start the client with context; send `auth` and `hello` (with `protocol` version) once connected.
+## Embed in your app
+```go
+import (
+  "context"
+  codebridge "github.com/just-every/code-bridge/go/codebridge"
+)
 
-## Send First Event
-Send a console/log event; client should handle heartbeat/reconnect.
+cfg := codebridge.ClientConfig{URL: url, Secret: secret, Capabilities: []string{"console", "error"}}
+client := codebridge.NewClient(cfg)
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
 
-## Verify
-Run host or `npm run protocol:test-server`; check logs for the received event.
+_ = client.Start(ctx)             // opens WS, sends auth + hello, starts ping/pong
+_ = client.SendConsole("info", "hello from go")
+// client.Close() when shutting down
+```
 
-## Next Steps
-Integrate with HTTP middleware/logging, add control handlers, and manage shutdown via context cancellation.
+## API surface
+- `Start(ctx)` — connects, sends `auth` + `hello`, starts heartbeat & reconnect loop
+- `Close()` — closes WS
+- `SendConsole(level, message)` — console event
+- Heartbeat: 15s ping / 30s timeout
+- Reconnect: exponential backoff 1s → 30s
+- Buffering: not implemented (send calls expect an open connection)
+
+## Notes & limits
+- Console + error events only; no screenshots/control/network capture yet
+- Set `CODE_BRIDGE_URL` / `CODE_BRIDGE_SECRET`; defaults to `ws://localhost:9877` and `dev-secret` if env missing

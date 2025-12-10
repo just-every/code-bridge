@@ -1,21 +1,48 @@
-# Ruby Quickstart (skeleton)
+# Ruby Quickstart
+
+Status: **Experimental** (ping heartbeat only; no reconnect/backoff yet)
 
 ## Install
-Registry: `gem install code-bridge` (after publishing)
-Dev: `cd ruby && bundle install`
-One-liner dev: `npm run sdk:ruby`
+- Published (after release): `gem install code-bridge`
+- From repo for dev/testing:
+  ```bash
+  cd ruby
+  bundle install
+  ```
 
-## Configure
-Set `CODE_BRIDGE_URL` and `CODE_BRIDGE_SECRET` in ENV; optionally gate with `RACK_ENV`/`RAILS_ENV` dev checks.
+## Run the example
+```bash
+npx code-bridge-host
+export CODE_BRIDGE_URL=$(node -p "require('./.code/code-bridge.json').url")
+export CODE_BRIDGE_SECRET=$(node -p "require('./.code/code-bridge.json').secret")
+bundle exec ruby ruby/examples/basic.rb
+```
 
-## Initialize
-Create/start the client with `url`, `secret`, `projectId?`, and capabilities; begin heartbeat.
+## Embed in your app
+```ruby
+require 'code_bridge_client'
 
-## Send First Event
-Emit a console/log event; ensure the `hello` includes the shared `protocol` version.
+client = CodeBridge::Client.new(
+  url: ENV.fetch('CODE_BRIDGE_URL'),
+  secret: ENV.fetch('CODE_BRIDGE_SECRET'),
+  project_id: 'ruby-app',
+  capabilities: ['console', 'error']
+)
 
-## Verify
-Run host or `npm run protocol:test-server`; watch for the received event.
+client.start
+client.send_console('hello from ruby')
+client.send_error('sample error')
+client.stop
+```
 
-## Next Steps
-Integrate with Rails/Rack logging, add error capture, and register control handlers as needed.
+## API surface
+- `start` / `stop`
+- `send_console(message, level: 'info')`
+- `send_error(message)`
+- Heartbeat: 15s ping loop
+- Reconnect/backoff: **not implemented yet**
+- Buffering: none (messages are dropped if socket is closed)
+
+## Notes & limits
+- Console + error events only
+- Uses `CODE_BRIDGE_URL` / `CODE_BRIDGE_SECRET`; defaults to `ws://localhost:9877` and `dev-secret` when env missing

@@ -9,14 +9,22 @@ Thin SDKs in multiple languages share the same protocol and API shape (see `../c
 5) Verify the host received it
 6) Next steps for framework integration
 
+Common setup (applies to every SDK):
+```
+npx code-bridge-host  # writes .code/code-bridge.json with url/secret
+export CODE_BRIDGE_URL=$(node -p "require('./.code/code-bridge.json').url")
+export CODE_BRIDGE_SECRET=$(node -p "require('./.code/code-bridge.json').secret")
+```
+
 Quickstarts:
-- [PHP](php.md)
-- [Python](python.md)
-- [Rust](rust.md)
-- [Ruby](ruby.md)
-- [Swift](swift.md)
-- [Java](java.md)
-- [Go](go.md)
+- [Python](python.md) (preview)
+- [Go](go.md) (preview)
+- [PHP](php.md) (experimental)
+- [Ruby](ruby.md) (experimental)
+- [Rust](rust.md) (experimental)
+- [Swift](swift.md) (experimental)
+- [Java](java.md) (scaffold / WIP)
+- Roblox / Lua HTTP: see [roblox.md](roblox.md)
 
 Root-level one-liners (from repo root):
 ```
