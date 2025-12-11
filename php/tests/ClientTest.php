@@ -36,9 +36,9 @@ class ClientTest extends TestCase
         return [$proc, $pipes];
     }
 
-    private function readEvents($pipe, float $timeout = 4.0, $errPipe = null): array
+    private function readEvents($pipe, float $timeout = 4.0, $errPipe = null, array $seed = []): array
     {
-        $events = [];
+        $events = $seed;
         $deadline = microtime(true) + $timeout;
         while (microtime(true) < $deadline) {
             $data = stream_get_contents($pipe);
@@ -104,8 +104,8 @@ class ClientTest extends TestCase
     {
         $port = 9891;
         [$proc, $pipes] = $this->spawnHost($port);
-        sleep(1); // allow server to start
-
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]); // wait for host listening
+        
         $cfg = new BridgeConfig("ws://127.0.0.1:{$port}", 'dev-secret', null, ['console', 'error'], 15000, 30000, 1000, 30000, 3);
         $client = new Client($cfg);
 
@@ -116,7 +116,7 @@ class ClientTest extends TestCase
         $pid = $this->forkClient($client, 2);
         $this->waitForChild($pid, 5);
 
-        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2], $events);
         proc_terminate($proc);
 
         $recv = array_values(array_filter(array_map(fn($e) => $e['msg'] ?? null, $events)));
@@ -142,7 +142,7 @@ class ClientTest extends TestCase
     {
         $port = 9892;
         [$proc, $pipes] = $this->spawnHost($port, true, true);
-        sleep(1);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
 
         $cfg = new BridgeConfig("ws://127.0.0.1:{$port}", 'dev-secret');
         $client = new Client($cfg);
@@ -156,7 +156,7 @@ class ClientTest extends TestCase
         $pid = $this->forkClient($client, 2);
         $this->waitForChild($pid, 5);
 
-        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2], $events);
         proc_terminate($proc);
 
         $controlResult = null;
@@ -174,7 +174,7 @@ class ClientTest extends TestCase
     {
         $port = 9893;
         [$proc, $pipes] = $this->spawnHost($port, false, false);
-        sleep(1);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
 
         $cfg = new BridgeConfig("ws://127.0.0.1:{$port}", 'dev-secret', null, ['console', 'error'], 50, 120, 50, 200, 10);
         $client = new Client($cfg);
@@ -182,7 +182,7 @@ class ClientTest extends TestCase
         $pid = $this->forkClient($client, 3);
         $this->waitForChild($pid, 6);
 
-        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2], $events);
         proc_terminate($proc);
 
         $recv = array_values(array_filter(array_map(fn($e) => $e['msg'] ?? null, $events)));
