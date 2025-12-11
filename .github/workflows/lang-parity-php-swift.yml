@@ -25,14 +25,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install ws for protocol host
+        run: npm install ws@8
+        working-directory: ruby/tests
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.2'
           bundler-cache: true
           working-directory: ruby
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 18
       - name: Run Ruby parity tests
         working-directory: ruby
         run: bundle exec ruby -Ilib tests/test_client.rb
@@ -60,6 +63,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 18
+      - name: Install ws for protocol host
+        run: npm install ws@8
+        working-directory: java/src/test/resources
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -73,6 +79,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install ws for protocol host
+        run: npm install ws@8
+        working-directory: php/tests
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -89,6 +101,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - name: Install ws for protocol host
+        run: npm install ws@8
+        working-directory: swift/Tests
       - name: Run Swift parity tests
         working-directory: swift
         run: swift test
