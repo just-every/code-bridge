@@ -3,7 +3,7 @@ use code_bridge_client::{BridgeClient, BridgeConfig};
 #[tokio::test]
 async fn heartbeat_and_reconnect() {
     let cfg = BridgeConfig {
-        url: "ws://localhost:9877".into(),
+        url: "ws://localhost:9876".into(),
         secret: "dev-secret".into(),
         project_id: Some("rust-test".into()),
         capabilities: vec!["console".into(), "error".into()],
@@ -11,6 +11,7 @@ async fn heartbeat_and_reconnect() {
         heartbeat_timeout_ms: 200,
         backoff_initial_ms: 50,
         backoff_max_ms: 200,
+        buffer_limit: 200,
     };
     let client = BridgeClient::new(cfg);
     // Run briefly to cover heartbeat/reconnect loop; abort after short duration

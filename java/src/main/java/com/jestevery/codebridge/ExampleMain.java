@@ -7,7 +7,7 @@ public class ExampleMain {
         String url = System.getenv().getOrDefault("CODE_BRIDGE_URL", "ws://localhost:9877");
         String secret = System.getenv().getOrDefault("CODE_BRIDGE_SECRET", "dev-secret");
         CodeBridgeClient client = new CodeBridgeClient(url, secret, "java-example", List.of("console", "error"));
-        client.start().get();
+        client.start();
         client.sendConsole("info", "hello from java");
         client.sendError("sample error");
         Thread.sleep(500);

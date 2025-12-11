@@ -28,6 +28,14 @@ coverage/
 .nyc_output/
 *.lcov
 rust/target/
+java/target/
+php/vendor/
+ruby/vendor/
+ruby/.bundle/
+swift/.build/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 
 # Code Bridge runtime metadata
 .code/

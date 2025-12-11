@@ -9,8 +9,9 @@ import asyncio
 import contextlib
 import json
 import os
+import random
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 import websockets
 
@@ -47,11 +48,15 @@ class CodeBridgeClient:
     self._ws: Optional[websockets.WebSocketClientProtocol] = None
     self._heartbeat_task: Optional[asyncio.Task] = None
     self._recv_task: Optional[asyncio.Task] = None
+    self._monitor_task: Optional[asyncio.Task] = None
     self._pong_deadline: Optional[float] = None
     self._buffer: List[dict] = []
+    self._dropped: int = 0
     self._connected = asyncio.Event()
     self._run_task: Optional[asyncio.Task] = None
     self._stopped = asyncio.Event()
+    self._control_handler: Optional[Callable[[dict], Any]] = None
+    self._loop = asyncio.get_event_loop()
 
   async def start(self):
     if self._run_task and not self._run_task.done():
@@ -61,7 +66,7 @@ class CodeBridgeClient:
 
   async def stop(self):
     self._stopped.set()
-    tasks = [self._heartbeat_task, self._recv_task, self._run_task]
+    tasks = [self._heartbeat_task, self._recv_task, self._monitor_task, self._run_task]
     for t in tasks:
       if t:
         t.cancel()
@@ -79,10 +84,14 @@ class CodeBridgeClient:
       payload["stack"] = stack
     await self._send_event(payload)
 
+  def on_control(self, handler: Callable[[dict], Any]):
+    self._control_handler = handler
+
   # Internal helpers
   async def _send_event(self, event: dict):
     if len(self._buffer) >= self.config.buffer_limit:
       self._buffer.pop(0)
+      self._dropped += 1
     self._buffer.append(event)
     await self._flush_buffer()
 
@@ -92,6 +101,14 @@ class CodeBridgeClient:
     while self._buffer:
       ev = self._buffer.pop(0)
       await self._ws.send(json.dumps(ev))
+    if self._dropped > 0:
+      await self._ws.send(json.dumps({
+        "type": "info",
+        "level": "info",
+        "message": f"bridge buffered drop count={self._dropped}",
+        "timestamp": _now_ms(),
+      }))
+      self._dropped = 0
 
   async def _send(self, obj: dict):
     if not self._ws:
@@ -103,12 +120,24 @@ class CodeBridgeClient:
       while True:
         if self._is_ws_closed():
           return
+        if self._pong_deadline is None:
+          self._set_pong_deadline()
         await self._ws.send(json.dumps({"type": "ping"}))
         await asyncio.sleep(self.config.heartbeat_interval_ms / 1000)
-    except asyncio.TimeoutError:
-      self._log("heartbeat timeout; closing")
-      if self._ws:
-        await self._ws.close()
+    except asyncio.CancelledError:
+      pass
+
+  async def _heartbeat_monitor(self):
+    try:
+      while True:
+        if self._is_ws_closed():
+          return
+        if self._pong_deadline and self._loop.time() > self._pong_deadline:
+          self._log("heartbeat timeout; closing")
+          if self._ws:
+            await self._ws.close()
+          return
+        await asyncio.sleep(0.05)
     except asyncio.CancelledError:
       pass
 
@@ -132,18 +161,36 @@ class CodeBridgeClient:
         return True
     return False
 
+  def _set_pong_deadline(self):
+    self._pong_deadline = self._loop.time() + (self.config.heartbeat_timeout_ms / 1000)
+
   async def _run_loop(self):
-    delay = self.config.backoff_initial_ms / 1000
+    delay_ms = float(self.config.backoff_initial_ms)
     while not self._stopped.is_set():
       try:
         self._log(f"connecting to {self.config.url}")
         headers = {"X-Bridge-Secret": self.config.secret}
         try:
-          self._ws = await websockets.connect(self.config.url, extra_headers=headers)
+          self._ws = await websockets.connect(
+            self.config.url,
+            extra_headers=headers,
+            ping_interval=None,
+            ping_timeout=None,
+          )
         except TypeError:
           # websockets>=15 renamed extra_headers->additional_headers
-          self._ws = await websockets.connect(self.config.url, additional_headers=headers)
+          self._ws = await websockets.connect(
+            self.config.url,
+            additional_headers=headers,
+            ping_interval=None,
+            ping_timeout=None,
+          )
+
         await self._send({"type": "auth", "secret": self.config.secret, "role": "bridge"})
+
+        # Wait for auth_success before sending hello to mirror JS behavior under auth gate
+        await self._wait_for_auth_success()
+
         await self._send({
           "type": "hello",
           "capabilities": self.config.capabilities,
@@ -153,11 +200,14 @@ class CodeBridgeClient:
         })
         self._log("connected")
         self._connected.set()
-        delay = self.config.backoff_initial_ms / 1000
+        delay_ms = float(self.config.backoff_initial_ms)
+        self._set_pong_deadline()
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self._recv_task = asyncio.create_task(self._drain_loop())
+        self._monitor_task = asyncio.create_task(self._heartbeat_monitor())
+        await self._flush_buffer()
         done, pending = await asyncio.wait(
-          [self._heartbeat_task, self._recv_task],
+          [self._heartbeat_task, self._recv_task, self._monitor_task],
           return_when=asyncio.FIRST_EXCEPTION,
         )
         for task in done:
@@ -175,14 +225,13 @@ class CodeBridgeClient:
             await self._ws.close()
           self._log(f"closed: code={getattr(self._ws, 'close_code', None)} reason={getattr(self._ws, 'close_reason', None)}")
         self._ws = None
-        if self._heartbeat_task:
-          self._heartbeat_task.cancel()
-        if self._recv_task:
-          self._recv_task.cancel()
+        for task in (self._heartbeat_task, self._recv_task, self._monitor_task):
+          if task:
+            task.cancel()
       if self._stopped.is_set():
         break
-      await asyncio.sleep(delay)
-      delay = min(delay * 2, self.config.backoff_max_ms / 1000)
+      await asyncio.sleep(self._jitter_delay(delay_ms) / 1000)
+      delay_ms = min(delay_ms * 2, float(self.config.backoff_max_ms))
 
   async def _drain_loop(self):
     while not self._stopped.is_set():
@@ -198,9 +247,61 @@ class CodeBridgeClient:
         continue
       if data.get("type") == "ping":
         await self._ws.send(json.dumps({"type": "pong"}))
+        self._set_pong_deadline()
       if data.get("type") == "pong":
-        # heartbeat loop handles timeout reset
+        self._set_pong_deadline()
         continue
+      if data.get("type") == "control_request":
+        await self._handle_control_request(data)
+        continue
+
+  async def _wait_for_auth_success(self):
+    deadline = self._loop.time() + (self.config.heartbeat_timeout_ms / 1000)
+    while True:
+      remaining = deadline - self._loop.time()
+      if remaining <= 0:
+        raise asyncio.TimeoutError("auth_success not received")
+      try:
+        raw = await asyncio.wait_for(self._ws.recv(), timeout=remaining)
+      except asyncio.TimeoutError:
+        raise
+      data = None
+      try:
+        data = json.loads(raw)
+      except Exception:
+        continue
+      if data.get("type") == "auth_success":
+        return
+      if data.get("type") == "ping":
+        await self._ws.send(json.dumps({"type": "pong"}))
+        self._set_pong_deadline()
+      if data.get("type") == "pong":
+        self._set_pong_deadline()
+
+  async def _handle_control_request(self, data: dict):
+    if not self._control_handler:
+      return
+    try:
+      result = self._control_handler(data)
+      if asyncio.iscoroutine(result):
+        result = await result
+      response = {
+        "type": "control_result",
+        "id": data.get("id"),
+        "ok": True,
+        "result": result,
+      }
+    except Exception as err:
+      response = {
+        "type": "control_result",
+        "id": data.get("id"),
+        "ok": False,
+        "error": {"message": str(err)},
+      }
+    await self._send(response)
+
+  def _jitter_delay(self, base_ms: float) -> float:
+    return random.uniform(base_ms, base_ms * 1.5)
 
 
 def from_env() -> BridgeConfig:

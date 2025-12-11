@@ -10,6 +10,9 @@
     "php": ">=8.0",
     "textalk/websocket": "^1.6"
   },
+  "require-dev": {
+    "phpunit/phpunit": "^10.5"
+  },
   "autoload": {
     "psr-4": {
       "CodeBridge\\": "src/CodeBridge/"
