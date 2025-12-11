@@ -79,8 +79,8 @@ class Client {
         $this->connected = false;
         $this->ws = new WSClient($this->config->url, [
             'headers' => ['X-Bridge-Secret: ' . $this->config->secret],
-            // short timeout so heartbeat timeout can fire
-            'timeout' => 0.5,
+            // modest timeout; reconnection/backoff will handle failures
+            'timeout' => 2,
         ]);
 
         $this->sendRaw(['type' => 'auth', 'secret' => $this->config->secret, 'role' => 'bridge']);
