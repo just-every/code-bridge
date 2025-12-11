@@ -24,5 +24,4 @@ cd java
 mvn test
 ```
 
-Tests use `src/test/resources/ProtocolHost.js` to validate handshake ordering, heartbeat timeout/reconnect, buffering drop notice, and control round-trip. CI is recommended (multi-JDK) but not yet wired here.
 Tests use `src/test/resources/ProtocolHost.js` to validate handshake ordering, heartbeat timeout/reconnect, buffering drop notice, and control round-trip. CI runs in `.github/workflows/lang-parity-php-swift.yml` (Temurin 17); consider expanding to a multi-JDK matrix later.
