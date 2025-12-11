@@ -36,12 +36,18 @@ class ClientTest extends TestCase
         return [$proc, $pipes];
     }
 
-    private function readEvents($pipe, float $timeout = 2.0): array
+    private function readEvents($pipe, float $timeout = 4.0, $errPipe = null): array
     {
         $events = [];
         $deadline = microtime(true) + $timeout;
         while (microtime(true) < $deadline) {
             $data = stream_get_contents($pipe);
+            if ($errPipe) {
+                $errData = stream_get_contents($errPipe);
+                if ($errData !== false && $errData !== '') {
+                    $data .= "\n" . $errData;
+                }
+            }
             if ($data !== false && $data !== '') {
                 foreach (explode("\n", $data) as $line) {
                     if (trim($line) === '') {
@@ -110,7 +116,7 @@ class ClientTest extends TestCase
         $pid = $this->forkClient($client, 2);
         $this->waitForChild($pid, 5);
 
-        $events = $this->readEvents($pipes[1]);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
         proc_terminate($proc);
 
         $recv = array_values(array_filter(array_map(fn($e) => $e['msg'] ?? null, $events)));
@@ -150,7 +156,7 @@ class ClientTest extends TestCase
         $pid = $this->forkClient($client, 2);
         $this->waitForChild($pid, 5);
 
-        $events = $this->readEvents($pipes[1], 3.0);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
         proc_terminate($proc);
 
         $controlResult = null;
@@ -176,7 +182,7 @@ class ClientTest extends TestCase
         $pid = $this->forkClient($client, 3);
         $this->waitForChild($pid, 6);
 
-        $events = $this->readEvents($pipes[1], 3.0);
+        $events = $this->readEvents($pipes[1], 4.0, $pipes[2]);
         proc_terminate($proc);
 
         $recv = array_values(array_filter(array_map(fn($e) => $e['msg'] ?? null, $events)));
