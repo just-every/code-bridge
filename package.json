@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
-    "ws": "^8.16.0"
+    "ws": "^8.21.0"
   },
   "repository": {
     "type": "git",
